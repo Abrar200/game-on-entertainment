@@ -21,12 +21,83 @@ interface Machine {
   status: string;
   image_url?: string;
   earnings?: number;
-  venue?: Venue;
+  venue?: any;
   current_prize_id?: string | null;
-  current_prize?: Prize;
+  current_prize?: any;
   serial_number?: string;
   barcode?: string;
 }
+
+
+export const findMachineByBarcode = async (barcode: string): Promise<Machine> => {
+  try {
+    console.log('🔍 Searching for machine with barcode:', barcode);
+
+    // Search for machine by barcode
+    const { data: machines, error } = await supabase
+      .from('machines')
+      .select(`
+        *,
+        venues(*),
+        prizes(*)
+      `)
+      .eq('barcode', barcode)
+      .limit(1);
+
+    if (error) {
+      console.error('Database error:', error);
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    if (!machines || machines.length === 0) {
+      // For testing, try to find a machine that contains part of the barcode
+      console.log('🔍 Exact match not found, trying partial match...');
+
+      const { data: partialMachines, error: partialError } = await supabase
+        .from('machines')
+        .select(`
+          *,
+          venues(*),
+          prizes(*)
+        `)
+        .ilike('barcode', `%${barcode}%`)
+        .limit(1);
+
+      if (partialError) {
+        throw new Error(`Database error: ${partialError.message}`);
+      }
+
+      if (!partialMachines || partialMachines.length === 0) {
+        throw new Error(`No machine found with barcode: ${barcode}`);
+      }
+
+      const machine = partialMachines[0];
+      console.log('✅ Partial match found:', machine.name);
+
+      return {
+        ...machine,
+        venue: Array.isArray(machine.venues) ? machine.venues[0] : machine.venues,
+        current_prize: Array.isArray(machine.prizes) ? machine.prizes[0] : machine.prizes
+      };
+    }
+
+    const machine = machines[0];
+
+    // Format the machine data consistently
+    const formattedMachine: Machine = {
+      ...machine,
+      venue: Array.isArray(machine.venues) ? machine.venues[0] : machine.venues,
+      current_prize: Array.isArray(machine.prizes) ? machine.prizes[0] : machine.prizes
+    };
+
+    console.log('✅ Machine found:', formattedMachine.name);
+    return formattedMachine;
+
+  } catch (error) {
+    console.error('❌ Error finding machine by barcode:', error);
+    throw error;
+  }
+};
 
 interface Prize {
   id: string;
@@ -53,6 +124,7 @@ interface MachineReport {
   created_at: string;
   report_date?: string;
 }
+
 
 interface AppContextType {
   sidebarOpen: boolean;
@@ -81,6 +153,16 @@ interface AppContextType {
   findMachineByBarcode: (barcode: string) => Promise<Machine>;
   selectedMachineForHistory: Machine | null;
   setSelectedMachineForHistory: (machine: Machine | null) => void;
+  // Add this line:
+  logStockMovement: (
+    itemType: 'prize' | 'part',
+    itemId: string,
+    movementType: 'in' | 'out' | 'adjustment',
+    quantity: number,
+    referenceType: string,
+    referenceId?: string,
+    notes?: string
+  ) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -140,11 +222,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         supabase.from('machine_reports').select('*').order('report_date', { ascending: false }),
         supabase.from('machine_stock').select('*')
       ]);
-      
+
       if (venuesRes.data) setVenues(venuesRes.data);
       if (machinesRes.data) {
-        setMachines(machinesRes.data.map(m => ({ 
-          ...m, 
+        setMachines(machinesRes.data.map(m => ({
+          ...m,
           venue: Array.isArray(m.venues) ? m.venues[0] : m.venues,
           current_prize: Array.isArray(m.prizes) ? m.prizes[0] : m.prizes
         })));
@@ -158,13 +240,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+
   const addMachine = async (machine: any) => {
-    const barcode = generateBarcode(machine.name, machine.serial_number || '');
-    const machineWithBarcode = { ...machine, barcode };
-    
-    const { error } = await supabase.from('machines').insert([machineWithBarcode]);
-    if (error) throw error;
-    await refreshData();
+    try {
+      console.log('Adding machine with data:', machine);
+
+      // Generate barcode
+      const barcode = generateBarcode(machine.name, machine.serial_number || '');
+      console.log('Generated barcode:', barcode);
+
+      const machineWithBarcode = {
+        ...machine,
+        barcode,
+        // Ensure all required fields are present
+        machine_type: machine.type, // Map type to machine_type for database
+        toy_counter_current: 0
+      };
+
+      console.log('Final machine data for database:', machineWithBarcode);
+
+      const { data, error } = await supabase
+        .from('machines')
+        .insert([machineWithBarcode])
+        .select(); // Add select to see what was inserted
+
+      if (error) {
+        console.error('Supabase error:', error);
+        throw new Error(`Database error: ${error.message}`);
+      }
+
+      console.log('Successfully inserted machine:', data);
+      await refreshData();
+
+    } catch (error) {
+      console.error('Error in addMachine:', error);
+      throw error; // Re-throw so the dialog can catch it
+    }
   };
 
   const deleteMachine = async (id: string) => {
@@ -193,9 +304,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const addPrize = async (prize: any) => {
-    const { error } = await supabase.from('prizes').insert([prize]);
-    if (error) throw error;
-    await refreshData();
+    try {
+      console.log('Adding prize with data:', prize);
+
+      const prizeData = {
+        name: prize.name,
+        cost: prize.cost,
+        stock_quantity: prize.stock_quantity,
+        image_url: prize.image_url,
+        category: prize.category || null,
+        description: prize.description || null
+      };
+
+      console.log('Final prize data for database:', prizeData);
+
+      const { data, error } = await supabase
+        .from('prizes')
+        .insert([prizeData])
+        .select();
+
+      if (error) {
+        console.error('Supabase error:', error);
+        throw new Error(`Database error: ${error.message}`);
+      }
+
+      console.log('Successfully inserted prize:', data);
+      await refreshData();
+
+    } catch (error) {
+      console.error('Error in addPrize:', error);
+      throw error;
+    }
   };
 
   const deletePrize = async (id: string) => {
@@ -211,16 +350,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toast({ title: 'Success', description: 'Prize updated successfully' });
   };
 
-  const updatePrizeStock = async (id: string, quantity: number) => {
-    const { error } = await supabase.from('prizes').update({ stock_quantity: quantity }).eq('id', id);
-    if (error) throw error;
-    await refreshData();
-  };
 
-  const addMachineStock = async (stock: any) => {
-    const { error } = await supabase.from('machine_stock').insert([stock]);
-    if (error) throw error;
-    await refreshData();
+  const updatePrizeStock = async (id: string, quantity: number) => {
+    try {
+      // Get current stock level
+      const { data: currentPrize } = await supabase
+        .from('prizes')
+        .select('stock_quantity')
+        .eq('id', id)
+        .single();
+
+      const currentStock = currentPrize?.stock_quantity || 0;
+      const difference = quantity - currentStock;
+
+      // Update the stock
+      const { error } = await supabase
+        .from('prizes')
+        .update({ stock_quantity: quantity })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Log the stock movement
+      if (difference !== 0) {
+        await logStockMovement(
+          'prize',
+          id,
+          difference > 0 ? 'in' : 'out',
+          Math.abs(difference),
+          'stock_adjustment',
+          undefined,
+          `Stock ${difference > 0 ? 'increased' : 'decreased'} by ${Math.abs(difference)}`
+        );
+      }
+
+      await refreshData();
+    } catch (error) {
+      console.error('Error updating prize stock:', error);
+      throw error;
+    }
   };
 
   const getLatestReport = (machineId: string): MachineReport | null => {
@@ -234,30 +402,89 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return machineReports.length > 0 ? machineReports[0] : null;
   };
 
+  const logStockMovement = async (
+    itemType: 'prize' | 'part',
+    itemId: string,
+    movementType: 'in' | 'out' | 'adjustment',
+    quantity: number,
+    referenceType: string,
+    referenceId?: string,
+    notes?: string
+  ) => {
+    try {
+      const { error } = await supabase
+        .from('stock_movements')
+        .insert([{
+          item_type: itemType,
+          item_id: itemId,
+          movement_type: movementType,
+          quantity: quantity,
+          reference_type: referenceType,
+          reference_id: referenceId,
+          notes: notes,
+          created_by: null // You can add user ID here if available
+        }]);
+
+      if (error) {
+        console.error('Error logging stock movement:', error);
+      }
+    } catch (error) {
+      console.error('Error logging stock movement:', error);
+    }
+  };
+
+
+  const addMachineStock = async (stock: MachineStock) => {
+    try {
+      // Add to machine_stock table
+      const { error: stockError } = await supabase
+        .from('machine_stock')
+        .insert([stock]);
+
+      if (stockError) throw stockError;
+
+      // Log the stock movement
+      await logStockMovement(
+        'prize',
+        stock.prize_id,
+        'out',
+        stock.quantity,
+        'machine_stock',
+        stock.machine_id,
+        `Added ${stock.quantity} prizes to machine`
+      );
+
+      await refreshData();
+    } catch (error) {
+      console.error('Error adding machine stock:', error);
+      throw error;
+    }
+  };
+
   const calculatePayoutPercentage = (machineId: string): number | null => {
     const latestReport = getLatestReport(machineId);
     if (!latestReport || !latestReport.money_collected) {
       return null;
     }
-    
+
     let prizeValue = latestReport.prize_value || 0;
     let toysDispensed = latestReport.toys_dispensed || 0;
-    
+
     if (toysDispensed === 0 && latestReport.current_toy_count !== null && latestReport.previous_toy_count !== null) {
       toysDispensed = Math.max(0, latestReport.current_toy_count - latestReport.previous_toy_count);
     }
-    
+
     if (prizeValue === 0 && toysDispensed > 0) {
       const machine = machines.find(m => m.id === machineId);
       if (machine?.current_prize) {
         prizeValue = toysDispensed * parseFloat(machine.current_prize.cost.toString());
       }
     }
-    
+
     if (prizeValue === 0) {
       return 0;
     }
-    
+
     return (prizeValue / latestReport.money_collected) * 100;
   };
 
@@ -266,14 +493,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const contextValue: AppContextType = {
-    sidebarOpen, 
-    toggleSidebar, 
-    venues, 
-    machines, 
+    sidebarOpen,
+    toggleSidebar,
+    venues,
+    machines,
     prizes,
     machineStock,
-    currentView, 
-    setCurrentView, 
+    currentView,
+    findMachineByBarcode,
+    setCurrentView,
     refreshData,
     companyLogo,
     setCompanyLogo: handleSetCompanyLogo,
@@ -289,7 +517,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updatePrize,
     updatePrizeStock,
     addMachineStock,
-    findMachineByBarcode: findMachineByBarcodeMethod,
+    logStockMovement,
     selectedMachineForHistory,
     setSelectedMachineForHistory
   };

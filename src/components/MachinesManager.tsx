@@ -22,24 +22,32 @@ export const MachinesManager: React.FC = () => {
   const [showProfile, setShowProfile] = useState(false);
   const [selectedMachine, setSelectedMachine] = useState<any>(null);
 
-  const filteredMachines = machines.filter(machine => 
+  const filteredMachines = machines.filter(machine =>
     machine.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     machine.serial_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     machine.barcode?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleScanResult = async (barcode: string) => {
+
+  const handleScanResult = async (barcode: string, machine?: any) => {
     try {
-      console.log('🔍 Handling scan result for barcode:', barcode);
-      const machine = await findMachineByBarcode(barcode);
-      
-      if (machine) {
-        console.log('✅ Machine found, opening profile:', machine.name);
-        setSelectedMachine(machine);
+      console.log('🔍 MachinesManager handling scan result for barcode:', barcode);
+
+      let foundMachine = machine;
+
+      // If machine wasn't provided by scanner, look it up
+      if (!foundMachine) {
+        console.log('🔍 Looking up machine by barcode...');
+        foundMachine = await findMachineByBarcode(barcode);
+      }
+
+      if (foundMachine) {
+        console.log('✅ Machine found, opening profile:', foundMachine.name);
+        setSelectedMachine(foundMachine);
         setShowProfile(true);
         toast({
           title: "Machine Found!",
-          description: `Opening profile for ${machine.name}`
+          description: `Opening profile for ${foundMachine.name}`
         });
       }
     } catch (error: any) {
@@ -143,11 +151,11 @@ export const MachinesManager: React.FC = () => {
                 )}
                 <p><strong>Type:</strong> {machine.type}</p>
               </div>
-              
+
               <div className="border-t pt-2">
                 <PayoutCalculator machineId={machine.id} />
               </div>
-              
+
               <div className="flex gap-2 pt-2">
                 <Button
                   variant="outline"

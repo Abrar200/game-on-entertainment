@@ -1,14 +1,18 @@
+// Update your MachineProfile.tsx imports and image handling
+
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { X, MapPin, Calendar, Wrench, DollarSign, FileText } from 'lucide-react';
+import { X, MapPin, Calendar, Wrench, DollarSign, FileText, Gift } from 'lucide-react';
 import { MachineBarcodeDisplay } from './MachineBarcodeDisplay';
 import { MachineEditDialog } from './MachineEditDialog';
 import { ServiceScheduleDialog } from './ServiceScheduleDialog';
 import { ReportsContent } from './ReportsContent';
 import MachineReportForm from './MachineReportForm';
+import AddPrizesToMachine from './AddPrizesToMachine';
+import { createImageWithFallback } from '@/lib/imageUtils';
 
 interface Machine {
   id: string;
@@ -36,6 +40,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showServiceDialog, setShowServiceDialog] = useState(false);
   const [showCreateReport, setShowCreateReport] = useState(false);
+  const [showAddPrizes, setShowAddPrizes] = useState(false);
 
   const handleViewReports = () => {
     setShowReports(true);
@@ -53,9 +58,16 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
     setShowEditDialog(true);
   };
 
+  const handleAddPrizes = () => {
+    setShowAddPrizes(true);
+  };
+
   const handleServiceScheduled = () => {
     setShowServiceDialog(false);
   };
+
+  // Use the shared image utility
+  const machineImage = createImageWithFallback(machine.image_url, machine.name, 'machine');
 
   return (
     <>
@@ -81,7 +93,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
 
           {/* Content */}
           <div className="p-6 space-y-6">
-            {/* Machine Image */}
+            {/* Machine Image - Fixed */}
             {machine.image_url && (
               <Card>
                 <CardHeader>
@@ -89,14 +101,12 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                 </CardHeader>
                 <CardContent>
                   <div className="flex justify-center">
-                    <img 
-                      src={machine.image_url} 
+                    <img
+                      src={machineImage.src}
                       alt={machine.name}
                       className="max-w-full max-h-64 object-contain rounded-lg shadow-md"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.style.display = 'none';
-                      }}
+                      onError={machineImage.onError}
+                      crossOrigin="anonymous"
                     />
                   </div>
                 </CardContent>
@@ -105,8 +115,8 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
 
             {/* Barcode Display */}
             {machine.barcode && (
-              <MachineBarcodeDisplay 
-                barcode={machine.barcode} 
+              <MachineBarcodeDisplay
+                barcode={machine.barcode}
                 machineName={machine.name}
               />
             )}
@@ -118,7 +128,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                   <CardTitle className="text-sm text-gray-600">Status</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Badge 
+                  <Badge
                     variant={machine.status === 'active' ? 'default' : 'secondary'}
                     className="text-lg px-3 py-1"
                   >
@@ -191,7 +201,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                 </CardHeader>
                 <CardContent>
                   <p className="text-lg">
-                    {machine.last_serviced 
+                    {machine.last_serviced
                       ? new Date(machine.last_serviced).toLocaleDateString()
                       : 'Never'
                     }
@@ -201,27 +211,34 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
             </div>
 
             {/* Action Buttons */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
-              <Button 
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 pt-4">
+              <Button
+                className="bg-purple-600 hover:bg-purple-700 text-white"
+                onClick={handleAddPrizes}
+              >
+                <Gift className="h-4 w-4 mr-2" />
+                Add Prizes
+              </Button>
+              <Button
                 className="bg-green-600 hover:bg-green-700"
                 onClick={handleCreateReport}
               >
                 <FileText className="h-4 w-4 mr-2" />
                 Create Report
               </Button>
-              <Button 
+              <Button
                 className="bg-red-600 hover:bg-red-700"
                 onClick={handleViewReports}
               >
                 📊 View Reports
               </Button>
-              <Button 
+              <Button
                 variant="outline"
                 onClick={handleScheduleService}
               >
                 🔧 Schedule Service
               </Button>
-              <Button 
+              <Button
                 variant="outline"
                 onClick={handleEditDetails}
               >
@@ -232,7 +249,14 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
         </div>
       </div>
 
-      {/* Create Report Dialog */}
+      {/* All your existing dialogs... */}
+      <AddPrizesToMachine
+        machineId={machine.id}
+        machineName={machine.name}
+        isOpen={showAddPrizes}
+        onClose={() => setShowAddPrizes(false)}
+      />
+
       <Dialog open={showCreateReport} onOpenChange={setShowCreateReport}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -242,7 +266,6 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
         </DialogContent>
       </Dialog>
 
-      {/* Reports Dialog */}
       <Dialog open={showReports} onOpenChange={setShowReports}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -252,7 +275,6 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
         </DialogContent>
       </Dialog>
 
-      {/* Edit Machine Dialog */}
       <MachineEditDialog
         isOpen={showEditDialog}
         onClose={() => setShowEditDialog(false)}
@@ -260,7 +282,6 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
         machineName={machine.name}
       />
 
-      {/* Service Schedule Dialog */}
       <ServiceScheduleDialog
         isOpen={showServiceDialog}
         onClose={() => setShowServiceDialog(false)}

@@ -10,13 +10,14 @@ import { useAppContext } from '@/contexts/AppContext';
 import ImageUpload from '@/components/ImageUpload';
 import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import VenueEditDialog from '@/components/VenueEditDialog';
+import { createImageWithFallback } from '@/lib/imageUtils';
 
 const VenuesManager: React.FC = () => {
   const { venues, addVenue, deleteVenue } = useAppContext();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedVenue, setSelectedVenue] = useState<string>('');
-  const [deleteDialog, setDeleteDialog] = useState<{open: boolean, venueId: string, venueName: string}>({
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean, venueId: string, venueName: string }>({
     open: false, venueId: '', venueName: ''
   });
   const [formData, setFormData] = useState({
@@ -47,7 +48,7 @@ const VenuesManager: React.FC = () => {
   };
 
   const handleDeleteClick = (id: string, name: string) => {
-    setDeleteDialog({open: true, venueId: id, venueName: name});
+    setDeleteDialog({ open: true, venueId: id, venueName: name });
   };
 
   const handleDeleteConfirm = async () => {
@@ -59,11 +60,6 @@ const VenuesManager: React.FC = () => {
     setIsEditDialogOpen(true);
   };
 
-  const getImageUrl = (url: string) => {
-    if (!url) return '';
-    if (url.startsWith('http')) return url;
-    return `https://bwmrnlbjjakqnmqvxiso.supabase.co/storage/v1/object/public/images/${url}`;
-  };
 
   return (
     <div className="space-y-6">
@@ -89,7 +85,7 @@ const VenuesManager: React.FC = () => {
                 <Input
                   id="name"
                   value={formData.name}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   required
                 />
               </div>
@@ -98,7 +94,7 @@ const VenuesManager: React.FC = () => {
                 <Textarea
                   id="address"
                   value={formData.address}
-                  onChange={(e) => setFormData({...formData, address: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                 />
               </div>
               <div>
@@ -106,7 +102,7 @@ const VenuesManager: React.FC = () => {
                 <Input
                   id="contact"
                   value={formData.contact_person}
-                  onChange={(e) => setFormData({...formData, contact_person: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })}
                 />
               </div>
               <div>
@@ -114,7 +110,7 @@ const VenuesManager: React.FC = () => {
                 <Input
                   id="phone"
                   value={formData.phone}
-                  onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 />
               </div>
               <div>
@@ -123,7 +119,7 @@ const VenuesManager: React.FC = () => {
                   id="commission"
                   type="number"
                   value={formData.commission_percentage}
-                  onChange={(e) => setFormData({...formData, commission_percentage: Number(e.target.value)})}
+                  onChange={(e) => setFormData({ ...formData, commission_percentage: Number(e.target.value) })}
                   min="0"
                   max="100"
                 />
@@ -131,7 +127,7 @@ const VenuesManager: React.FC = () => {
               <ImageUpload
                 folder="venues"
                 currentImage={formData.image_url}
-                onImageUploaded={(url) => setFormData({...formData, image_url: url})}
+                onImageUploaded={(url) => setFormData({ ...formData, image_url: url })}
               />
               <Button type="submit" className="w-full">
                 Add Venue
@@ -148,16 +144,16 @@ const VenuesManager: React.FC = () => {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg">{venue.name}</CardTitle>
                 <div className="flex gap-2">
-                  <Button 
-                    size="sm" 
+                  <Button
+                    size="sm"
                     variant="outline"
                     onClick={() => openEditDialog(venue.id)}
                   >
                     <Edit className="h-4 w-4" />
                   </Button>
-                  <Button 
-                    size="sm" 
-                    variant="destructive" 
+                  <Button
+                    size="sm"
+                    variant="destructive"
                     onClick={() => handleDeleteClick(venue.id, venue.name)}
                   >
                     <Trash2 className="h-4 w-4" />
@@ -168,10 +164,10 @@ const VenuesManager: React.FC = () => {
             <CardContent className="space-y-4">
               {venue.image_url && (
                 <div className="mb-4">
-                  <img 
-                    src={getImageUrl(venue.image_url)} 
-                    alt={venue.name}
+                  <img
+                    {...createImageWithFallback(venue.image_url, venue.name, 'venue')}
                     className="w-full h-32 object-cover rounded"
+                    crossOrigin="anonymous"
                   />
                 </div>
               )}
@@ -181,7 +177,7 @@ const VenuesManager: React.FC = () => {
                   <p className="text-sm text-gray-600">{venue.address}</p>
                 </div>
               )}
-              
+
               <div className="space-y-2">
                 {venue.contact_person && (
                   <p className="text-sm"><strong>Contact:</strong> {venue.contact_person}</p>
@@ -206,7 +202,7 @@ const VenuesManager: React.FC = () => {
 
       <ConfirmDeleteDialog
         isOpen={deleteDialog.open}
-        onClose={() => setDeleteDialog({open: false, venueId: '', venueName: ''})}
+        onClose={() => setDeleteDialog({ open: false, venueId: '', venueName: '' })}
         onConfirm={handleDeleteConfirm}
         itemType="Venue"
         itemName={deleteDialog.venueName}

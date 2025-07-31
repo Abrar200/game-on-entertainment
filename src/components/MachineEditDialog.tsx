@@ -58,12 +58,12 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.name.trim()) {
       toast({ title: 'Error', description: 'Machine name is required', variant: 'destructive' });
       return;
     }
-    
+
     if (!formData.type.trim()) {
       toast({ title: 'Error', description: 'Machine type is required', variant: 'destructive' });
       return;
@@ -79,26 +79,42 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         image_url: formData.image_url || null,
         serial_number: formData.serial_number.trim() || null
       };
-      
+
+      console.log('Submitting machine data:', machineData);
+
       if (machine) {
+        // Update existing machine
+        const updateData = {
+          ...machineData,
+          machine_type: machineData.type // Ensure machine_type is set for database
+        };
+
         const { error } = await supabase
           .from('machines')
-          .update(machineData)
+          .update(updateData)
           .eq('id', machine.id);
-        if (error) throw error;
+
+        if (error) {
+          console.error('Update error:', error);
+          throw new Error(`Failed to update machine: ${error.message}`);
+        }
+
+        await refreshData();
         toast({ title: 'Success', description: 'Machine updated successfully!' });
       } else {
+        // Add new machine using AppContext method
         await addMachine(machineData);
         toast({ title: 'Success', description: 'Machine added successfully!' });
       }
-      
+
       onClose();
     } catch (error) {
       console.error('Error saving machine:', error);
-      toast({ 
-        title: 'Error', 
-        description: error instanceof Error ? error.message : 'Failed to save machine', 
-        variant: 'destructive' 
+      const errorMessage = error instanceof Error ? error.message : 'Failed to save machine';
+      toast({
+        title: 'Error',
+        description: errorMessage,
+        variant: 'destructive'
       });
     } finally {
       setIsSubmitting(false);
@@ -117,7 +133,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
             <Input
               id="name"
               value={formData.name}
-              onChange={(e) => setFormData({...formData, name: e.target.value})}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="Enter machine name"
               required
             />
@@ -127,7 +143,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
             <Input
               id="type"
               value={formData.type}
-              onChange={(e) => setFormData({...formData, type: e.target.value})}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
               placeholder="e.g., Claw Machine, Arcade Game"
               required
             />
@@ -137,13 +153,13 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
             <Input
               id="serial_number"
               value={formData.serial_number}
-              onChange={(e) => setFormData({...formData, serial_number: e.target.value})}
+              onChange={(e) => setFormData({ ...formData, serial_number: e.target.value })}
               placeholder="Enter serial number"
             />
           </div>
           <div>
             <Label htmlFor="venue">Venue</Label>
-            <Select value={formData.venue_id} onValueChange={(value) => setFormData({...formData, venue_id: value})}>
+            <Select value={formData.venue_id} onValueChange={(value) => setFormData({ ...formData, venue_id: value })}>
               <SelectTrigger>
                 <SelectValue placeholder="Select a venue (optional)" />
               </SelectTrigger>
@@ -159,7 +175,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           </div>
           <div>
             <Label htmlFor="status">Status</Label>
-            <Select value={formData.status} onValueChange={(value) => setFormData({...formData, status: value})}>
+            <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value })}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -173,20 +189,20 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           <ImageUpload
             folder="machines"
             currentImage={formData.image_url}
-            onImageUploaded={(url) => setFormData({...formData, image_url: url})}
+            onImageUploaded={(url) => setFormData({ ...formData, image_url: url })}
           />
           <div className="flex gap-2">
-            <Button 
-              type="button" 
-              variant="outline" 
+            <Button
+              type="button"
+              variant="outline"
               onClick={onClose}
               className="flex-1"
               disabled={isSubmitting}
             >
               Cancel
             </Button>
-            <Button 
-              type="submit" 
+            <Button
+              type="submit"
               disabled={isSubmitting}
               className="flex-1"
             >

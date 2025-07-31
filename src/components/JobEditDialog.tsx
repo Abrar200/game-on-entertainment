@@ -16,8 +16,15 @@ interface Job {
   title: string;
   description: string;
   priority: 'low' | 'medium' | 'urgent';
-  status: 'open' | 'in_progress' | 'completed';
+  status: string; // Changed to string to match JobsManager
   progress_updates?: string[];
+  machine_id?: string;
+  created_at?: string;
+  machine?: {
+    name: string;
+    type: string;
+    venue?: { name: string };
+  };
 }
 
 interface JobEditDialogProps {
@@ -38,6 +45,25 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
   });
   const [newUpdate, setNewUpdate] = useState('');
   const [showUpdateForm, setShowUpdateForm] = useState(false);
+  // Add local state to track progress updates for immediate display
+  const [localProgressUpdates, setLocalProgressUpdates] = useState<string[]>([]);
+
+  // Function to normalize status for display and database operations
+  const normalizeStatus = (status: string): string => {
+    return status.toLowerCase();
+  };
+
+  // Function to get status display label
+  const getStatusLabel = (status: string): string => {
+    const normalized = normalizeStatus(status);
+    const labels = {
+      'open': 'Open',
+      'in_progress': 'In Progress',
+      'completed': 'Completed',
+      'pending': 'Pending'
+    };
+    return labels[normalized] || status;
+  };
 
   React.useEffect(() => {
     if (job) {
@@ -45,14 +71,16 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
         title: job.title,
         description: job.description,
         priority: job.priority,
-        status: job.status
+        status: normalizeStatus(job.status)
       });
+      // Update local progress updates when job changes
+      setLocalProgressUpdates(job.progress_updates || []);
     }
   }, [job]);
 
   const handleSave = async () => {
     if (!job) return;
-    
+
     setLoading(true);
     try {
       const { error } = await supabase
@@ -61,15 +89,15 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
           title: formData.title,
           description: formData.description,
           priority: formData.priority,
-          status: formData.status
+          status: formData.status // This will be the normalized lowercase version
         })
         .eq('id', job.id);
 
       if (error) throw error;
 
       toast({ title: 'Success', description: 'Job updated successfully!' });
-      onUpdate();
-      onClose();
+      onUpdate(); // This will refresh the data
+      onClose();  // This will close the dialog
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to update job', variant: 'destructive' });
     } finally {
@@ -79,26 +107,59 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
 
   const handleAddUpdate = async () => {
     if (!job || !newUpdate.trim()) return;
-    
+
     setLoading(true);
     try {
-      const updates = job.progress_updates || [];
+      const updates = localProgressUpdates; // Use local state instead of job.progress_updates
       const timestamp = new Date().toISOString();
       const updateEntry = `${timestamp}: ${newUpdate.trim()}`;
-      
-      const { error } = await supabase
-        .from('jobs')
-        .update({ progress_updates: [...updates, updateEntry] })
-        .eq('id', job.id);
+      const newUpdatesArray = [...updates, updateEntry];
 
-      if (error) throw error;
+      console.log('📝 Adding progress update:', updateEntry);
+      console.log('🔍 Current updates:', updates);
+      console.log('📋 Job ID:', job.id);
+
+      const { data, error } = await supabase
+        .from('jobs')
+        .update({ progress_updates: newUpdatesArray })
+        .eq('id', job.id)
+        .select(); // Add select to see what was updated
+
+      if (error) {
+        console.error('❌ Progress update error:', error);
+        console.error('Error code:', error.code);
+        console.error('Error message:', error.message);
+        console.error('Error details:', error.details);
+        throw error;
+      }
+
+      console.log('✅ Progress update successful:', data);
+
+      // Update local state immediately to show the new update
+      setLocalProgressUpdates(newUpdatesArray);
 
       toast({ title: 'Success', description: 'Progress update added!' });
       setNewUpdate('');
       setShowUpdateForm(false);
+
+      // Still call onUpdate to refresh the parent list, but we don't need to wait for it
       onUpdate();
-    } catch (error) {
-      toast({ title: 'Error', description: 'Failed to add update', variant: 'destructive' });
+    } catch (error: any) {
+      console.error('❌ Failed to add update:', error);
+
+      let errorMessage = 'Failed to add update';
+      if (error.message) {
+        errorMessage += `: ${error.message}`;
+      }
+      if (error.code === 'PGRST204') {
+        errorMessage = 'Database error: progress_updates column does not exist. Please add it to your jobs table.';
+      }
+
+      toast({
+        title: 'Error',
+        description: errorMessage,
+        variant: 'destructive'
+      });
     } finally {
       setLoading(false);
     }
@@ -112,31 +173,31 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
         <DialogHeader>
           <DialogTitle>Edit Job</DialogTitle>
         </DialogHeader>
-        
+
         <div className="space-y-4">
           <div>
             <Label>Title</Label>
             <Input
               value={formData.title}
-              onChange={(e) => setFormData({...formData, title: e.target.value})}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               disabled={loading}
             />
           </div>
-          
+
           <div>
             <Label>Description</Label>
             <Textarea
               value={formData.description}
-              onChange={(e) => setFormData({...formData, description: e.target.value})}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               rows={3}
               disabled={loading}
             />
           </div>
-          
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Priority</Label>
-              <Select value={formData.priority} onValueChange={(value: any) => setFormData({...formData, priority: value})}>
+              <Select value={formData.priority} onValueChange={(value: any) => setFormData({ ...formData, priority: value })}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -147,10 +208,10 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div>
               <Label>Status</Label>
-              <Select value={formData.status} onValueChange={(value: any) => setFormData({...formData, status: value})}>
+              <Select value={formData.status} onValueChange={(value: string) => setFormData({ ...formData, status: value })}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -158,13 +219,14 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
                   <SelectItem value="open">Open</SelectItem>
                   <SelectItem value="in_progress">In Progress</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
-          
+
           <Separator />
-          
+
           <div>
             <div className="flex justify-between items-center mb-3">
               <h3 className="font-semibold">Progress Updates</h3>
@@ -177,7 +239,7 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
                 Add Update
               </Button>
             </div>
-            
+
             {showUpdateForm && (
               <div className="space-y-2 mb-4 p-3 bg-gray-50 rounded">
                 <Textarea
@@ -196,10 +258,11 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
                 </div>
               </div>
             )}
-            
+
             <div className="space-y-2 max-h-40 overflow-y-auto">
-              {job.progress_updates && job.progress_updates.length > 0 ? (
-                job.progress_updates.map((update, index) => {
+              {localProgressUpdates && localProgressUpdates.length > 0 ? (
+                // Reverse the array to show latest updates first (most recent at top)
+                [...localProgressUpdates].reverse().map((update, index) => {
                   const [timestamp, ...messageParts] = update.split(': ');
                   const message = messageParts.join(': ');
                   return (
@@ -217,7 +280,7 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
               )}
             </div>
           </div>
-          
+
           <div className="flex justify-end gap-2 pt-4">
             <Button variant="outline" onClick={onClose} disabled={loading}>
               Cancel

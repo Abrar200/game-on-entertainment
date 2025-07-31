@@ -21,7 +21,7 @@ const VenueForm: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) return;
-    
+
     setLoading(true);
     try {
       await addVenue({
@@ -102,8 +102,8 @@ const VenueForm: React.FC = () => {
             currentImage={formData.image_url}
             folder="venues"
           />
-          <Button 
-            type="submit" 
+          <Button
+            type="submit"
             disabled={loading || !formData.name.trim()}
             className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
           >

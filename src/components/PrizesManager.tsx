@@ -6,18 +6,22 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus, Gift, Package, Trash2, Edit } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
+import { useToast } from '@/hooks/use-toast';
 import ImageUpload from '@/components/ImageUpload';
 import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import PrizeEditDialog from '@/components/PrizeEditDialog';
+import { createImageWithFallback } from '@/lib/imageUtils';
 
 const PrizesManager: React.FC = () => {
   const { prizes, addPrize, deletePrize, updatePrizeStock } = useAppContext();
+  const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isStockDialogOpen, setIsStockDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedPrize, setSelectedPrize] = useState<string>('');
   const [stockQuantity, setStockQuantity] = useState('');
-  const [deleteDialog, setDeleteDialog] = useState<{open: boolean, prizeId: string, prizeName: string}>({
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean, prizeId: string, prizeName: string }>({
     open: false, prizeId: '', prizeName: ''
   });
   const [formData, setFormData] = useState({
@@ -29,35 +33,85 @@ const PrizesManager: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate form data
+    if (!formData.name.trim()) {
+      toast({ title: 'Error', description: 'Prize name is required', variant: 'destructive' });
+      return;
+    }
+
+    if (!formData.cost || Number(formData.cost) <= 0) {
+      toast({ title: 'Error', description: 'Valid cost is required', variant: 'destructive' });
+      return;
+    }
+
+    if (!formData.stock_quantity || Number(formData.stock_quantity) < 0) {
+      toast({ title: 'Error', description: 'Valid stock quantity is required', variant: 'destructive' });
+      return;
+    }
+
+    setIsSubmitting(true);
+
     try {
-      await addPrize({
-        name: formData.name,
+      const prizeData = {
+        name: formData.name.trim(),
         cost: Number(formData.cost),
         stock_quantity: Number(formData.stock_quantity),
-        image_url: formData.image_url
-      });
+        image_url: formData.image_url || null
+      };
+
+      console.log('Submitting prize data:', prizeData);
+
+      await addPrize(prizeData);
+
+      // Reset form and close dialog
       setFormData({ name: '', cost: '', stock_quantity: '', image_url: '' });
       setIsDialogOpen(false);
+
+      toast({ title: 'Success', description: 'Prize added successfully!' });
+
     } catch (error) {
       console.error('Error adding prize:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to add prize';
+      toast({
+        title: 'Error',
+        description: errorMessage,
+        variant: 'destructive'
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleDeleteClick = (id: string, name: string) => {
-    setDeleteDialog({open: true, prizeId: id, prizeName: name});
+    setDeleteDialog({ open: true, prizeId: id, prizeName: name });
   };
 
   const handleDeleteConfirm = async () => {
-    await deletePrize(deleteDialog.prizeId);
+    try {
+      await deletePrize(deleteDialog.prizeId);
+      toast({ title: 'Success', description: 'Prize deleted successfully!' });
+    } catch (error) {
+      console.error('Error deleting prize:', error);
+      toast({ title: 'Error', description: 'Failed to delete prize', variant: 'destructive' });
+    } finally {
+      setDeleteDialog({ open: false, prizeId: '', prizeName: '' });
+    }
   };
 
   const handleStockUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (selectedPrize && stockQuantity) {
-      await updatePrizeStock(selectedPrize, Number(stockQuantity));
-      setIsStockDialogOpen(false);
-      setSelectedPrize('');
-      setStockQuantity('');
+      try {
+        await updatePrizeStock(selectedPrize, Number(stockQuantity));
+        setIsStockDialogOpen(false);
+        setSelectedPrize('');
+        setStockQuantity('');
+        toast({ title: 'Success', description: 'Stock updated successfully!' });
+      } catch (error) {
+        console.error('Error updating stock:', error);
+        toast({ title: 'Error', description: 'Failed to update stock', variant: 'destructive' });
+      }
     }
   };
 
@@ -72,11 +126,6 @@ const PrizesManager: React.FC = () => {
     setIsEditDialogOpen(true);
   };
 
-  const getImageUrl = (url: string) => {
-    if (!url) return '';
-    if (url.startsWith('http')) return url;
-    return `https://bwmrnlbjjakqnmqvxiso.supabase.co/storage/v1/object/public/images/${url}`;
-  };
 
   return (
     <div className="space-y-6">
@@ -98,34 +147,36 @@ const PrizesManager: React.FC = () => {
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <Label htmlFor="name">Prize Name</Label>
+                <Label htmlFor="name">Prize Name *</Label>
                 <Input
                   id="name"
                   value={formData.name}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Enter prize name"
                   required
                 />
               </div>
               <div>
-                <Label htmlFor="cost">Cost ($)</Label>
+                <Label htmlFor="cost">Cost ($) *</Label>
                 <Input
                   id="cost"
                   type="number"
                   step="0.01"
+                  min="0.01"
                   value={formData.cost}
-                  onChange={(e) => setFormData({...formData, cost: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
                   placeholder="Enter cost"
                   required
                 />
               </div>
               <div>
-                <Label htmlFor="stock">Initial Stock</Label>
+                <Label htmlFor="stock">Initial Stock *</Label>
                 <Input
                   id="stock"
                   type="number"
+                  min="0"
                   value={formData.stock_quantity}
-                  onChange={(e) => setFormData({...formData, stock_quantity: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, stock_quantity: e.target.value })}
                   placeholder="Enter initial stock"
                   required
                 />
@@ -133,11 +184,26 @@ const PrizesManager: React.FC = () => {
               <ImageUpload
                 folder="prizes"
                 currentImage={formData.image_url}
-                onImageUploaded={(url) => setFormData({...formData, image_url: url})}
+                onImageUploaded={(url) => setFormData({ ...formData, image_url: url })}
               />
-              <Button type="submit" className="w-full">
-                Add Prize
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsDialogOpen(false)}
+                  className="flex-1"
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Adding...' : 'Add Prize'}
+                </Button>
+              </div>
             </form>
           </DialogContent>
         </Dialog>
@@ -148,23 +214,23 @@ const PrizesManager: React.FC = () => {
           const prizeName = prize.name || 'Unknown Prize';
           const prizeCost = prize.cost || 0;
           const prizeStock = prize.stock_quantity || 0;
-          
+
           return (
             <Card key={prize.id} className="hover:shadow-lg transition-shadow">
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg">{prizeName}</CardTitle>
                   <div className="flex gap-2">
-                    <Button 
-                      size="sm" 
+                    <Button
+                      size="sm"
                       variant="outline"
                       onClick={() => openEditDialog(prize.id)}
                     >
                       <Edit className="h-4 w-4" />
                     </Button>
-                    <Button 
-                      size="sm" 
-                      variant="destructive" 
+                    <Button
+                      size="sm"
+                      variant="destructive"
                       onClick={() => handleDeleteClick(prize.id, prizeName)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -175,10 +241,10 @@ const PrizesManager: React.FC = () => {
               <CardContent className="space-y-4">
                 {prize.image_url && (
                   <div className="mb-4">
-                    <img 
-                      src={getImageUrl(prize.image_url)} 
-                      alt={prizeName}
+                    <img
+                      {...createImageWithFallback(prize.image_url, prizeName, 'prize')}
                       className="w-full h-32 object-cover rounded"
+                      crossOrigin="anonymous"
                     />
                   </div>
                 )}
@@ -195,10 +261,10 @@ const PrizesManager: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="flex space-x-2">
-                  <Button 
-                    size="sm" 
+                  <Button
+                    size="sm"
                     variant="outline"
                     onClick={() => openStockDialog(prize.id, prizeStock)}
                   >
@@ -221,7 +287,7 @@ const PrizesManager: React.FC = () => {
 
       <ConfirmDeleteDialog
         isOpen={deleteDialog.open}
-        onClose={() => setDeleteDialog({open: false, prizeId: '', prizeName: ''})}
+        onClose={() => setDeleteDialog({ open: false, prizeId: '', prizeName: '' })}
         onConfirm={handleDeleteConfirm}
         itemType="Prize"
         itemName={deleteDialog.prizeName}
@@ -251,9 +317,19 @@ const PrizesManager: React.FC = () => {
                 required
               />
             </div>
-            <Button type="submit" className="w-full">
-              Update Stock
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsStockDialogOpen(false)}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1">
+                Update Stock
+              </Button>
+            </div>
           </form>
         </DialogContent>
       </Dialog>

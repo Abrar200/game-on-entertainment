@@ -20,7 +20,7 @@ interface Job {
   description: string;
   machine_id: string;
   priority: 'low' | 'medium' | 'urgent';
-  status: 'open' | 'in_progress' | 'completed';
+  status: string; // Changed to string to handle various status formats
   created_at: string;
   progress_updates?: string[];
   machine?: {
@@ -51,18 +51,27 @@ const JobsManager: React.FC = () => {
     urgent: { label: 'Urgent Priority', color: 'bg-red-500 text-white', icon: AlertTriangle }
   };
 
-  const statusConfig = {
-    open: { label: 'Open', color: 'bg-blue-500 text-white' },
-    in_progress: { label: 'In Progress', color: 'bg-orange-500 text-white' },
-    completed: { label: 'Completed', color: 'bg-green-500 text-white' }
+  // Updated statusConfig to handle both cases and include a fallback
+  const getStatusConfig = (status: string) => {
+    const normalizedStatus = status.toLowerCase();
+    const statusConfigs = {
+      'open': { label: 'Open', color: 'bg-blue-500 text-white' },
+      'in_progress': { label: 'In Progress', color: 'bg-orange-500 text-white' },
+      'completed': { label: 'Completed', color: 'bg-green-500 text-white' },
+      'pending': { label: 'Pending', color: 'bg-gray-500 text-white' }
+    };
+
+    return statusConfigs[normalizedStatus] || { label: status, color: 'bg-gray-500 text-white' };
   };
 
   useEffect(() => {
     fetchJobs();
   }, []);
 
-  const fetchJobs = async () => {
+  // Fixed fetchJobs function - added keepEditingJobClosed parameter
+  const fetchJobs = async (keepEditingJobClosed = false) => {
     try {
+      console.log('📋 Fetching jobs...');
       const { data, error } = await supabase
         .from('jobs')
         .select(`
@@ -75,10 +84,24 @@ const JobsManager: React.FC = () => {
         `)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Error fetching jobs:', error);
+        throw error;
+      }
+
+      console.log('✅ Jobs fetched:', data?.length || 0);
       setJobs(data || []);
+
+      // Only update editingJob if we're not trying to close the dialog
+      if (editingJob && data && !keepEditingJobClosed) {
+        const updatedEditingJob = data.find(job => job.id === editingJob.id);
+        if (updatedEditingJob) {
+          console.log('🔄 Updating editing job with fresh data');
+          setEditingJob(updatedEditingJob);
+        }
+      }
     } catch (error) {
-      console.error('Error fetching jobs:', error);
+      console.error('❌ Error fetching jobs:', error);
       toast({
         title: 'Error',
         description: 'Failed to load jobs',
@@ -89,33 +112,39 @@ const JobsManager: React.FC = () => {
 
   const sendJobNotification = async (job: any, machine: any, venue: any) => {
     try {
+      console.log('📧 Sending job notification...');
       const { error } = await supabase.functions.invoke('send-job-email', {
         body: { job, machine, venue }
       });
-      
+
       if (error) {
-        console.error('Email notification error:', error);
+        console.error('❌ Email notification error:', error);
         // Don't fail the job creation if email fails
+      } else {
+        console.log('✅ Email notification sent');
       }
     } catch (error) {
-      console.error('Failed to send email notification:', error);
+      console.error('❌ Failed to send email notification:', error);
     }
   };
 
   const handleBarcodeScanned = async (barcode: string) => {
+    console.log('📱 Barcode scanned in JobsManager:', barcode);
     try {
       const machine = await findMachineByBarcode(barcode);
       if (machine) {
-        setFormData({...formData, machine_id: machine.id});
+        console.log('✅ Machine found for job creation:', machine.name);
+        setFormData({ ...formData, machine_id: machine.id });
         toast({
-          title: 'Machine Found',
-          description: `Selected: ${machine.name}`
+          title: 'Machine Selected',
+          description: `Selected: ${machine.name} for job creation`
         });
       }
     } catch (error) {
+      console.error('❌ Error finding machine:', error);
       toast({
-        title: 'Error',
-        description: 'Failed to find machine',
+        title: 'Machine Not Found',
+        description: 'Scanned barcode does not match any machine in the database',
         variant: 'destructive'
       });
     }
@@ -123,7 +152,10 @@ const JobsManager: React.FC = () => {
   };
 
   const validateForm = () => {
+    console.log('🔍 Validating form data:', formData);
+
     if (!formData.title.trim()) {
+      console.log('❌ Validation failed: No title');
       toast({
         title: 'Validation Error',
         description: 'Please enter a job title',
@@ -131,8 +163,9 @@ const JobsManager: React.FC = () => {
       });
       return false;
     }
-    
+
     if (!formData.machine_id) {
+      console.log('❌ Validation failed: No machine selected');
       toast({
         title: 'Validation Error',
         description: 'Please select a machine using the search above',
@@ -143,35 +176,48 @@ const JobsManager: React.FC = () => {
 
     const selectedMachine = machines?.find(m => m.id === formData.machine_id);
     if (!selectedMachine) {
+      console.log('❌ Validation failed: Invalid machine ID');
       toast({
         title: 'Validation Error',
         description: 'Selected machine is invalid. Please search and select a machine again.',
         variant: 'destructive'
       });
-      setFormData({...formData, machine_id: ''});
+      setFormData({ ...formData, machine_id: '' });
       return false;
     }
 
+    console.log('✅ Form validation passed');
     return true;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!validateForm()) return;
+    console.log('🚀 Starting job creation...');
+
+    if (!validateForm()) {
+      console.log('❌ Form validation failed, aborting job creation');
+      return;
+    }
 
     setLoading(true);
-    
+
     try {
+      console.log('💾 Creating job in database...');
+
+      // Use lowercase 'open' as the default status
+      const jobData = {
+        title: formData.title.trim(),
+        description: formData.description.trim(),
+        machine_id: formData.machine_id,
+        priority: formData.priority,
+        status: 'pending' // Use lowercase consistently
+      };
+
+      console.log('📝 Job data to insert:', jobData);
+
       const { data, error } = await supabase
         .from('jobs')
-        .insert([{
-          title: formData.title.trim(),
-          description: formData.description.trim(),
-          machine_id: formData.machine_id,
-          priority: formData.priority,
-          status: 'open'
-        }])
+        .insert([jobData])
         .select(`
           *,
           machine:machines(
@@ -181,26 +227,52 @@ const JobsManager: React.FC = () => {
           )
         `);
 
-      if (error) throw error;
-      
+      if (error) {
+        console.error('❌ Database error:', error);
+        throw error;
+      }
+
+      console.log('✅ Job created successfully:', data);
+
       // Send email notification
       if (data && data[0]) {
+        console.log('📧 Attempting to send notification...');
         await sendJobNotification(data[0], data[0].machine, data[0].machine?.venue);
       }
-      
+
+      // Reset form and close
       setFormData({ title: '', description: '', machine_id: '', priority: 'medium' });
       setShowForm(false);
+
+      // Refresh jobs list
       await fetchJobs();
-      
+
       toast({
         title: 'Success',
-        description: 'Job created successfully and notifications sent!'
+        description: 'Job created successfully!'
       });
-    } catch (error) {
-      console.error('Error creating job:', error);
+
+      console.log('🎉 Job creation completed successfully');
+
+    } catch (error: any) {
+      console.error('❌ Error during job creation:', error);
+
+      let errorMessage = 'Failed to create job. Please try again.';
+
+      if (error.message) {
+        errorMessage += ` Error: ${error.message}`;
+      }
+
+      if (error.code) {
+        console.error('Database error code:', error.code);
+        if (error.code === '23514') {
+          errorMessage = 'Database constraint error: Invalid status value. Please contact support.';
+        }
+      }
+
       toast({
         title: 'Error',
-        description: 'Failed to create job. Please try again.',
+        description: errorMessage,
         variant: 'destructive'
       });
     } finally {
@@ -208,12 +280,18 @@ const JobsManager: React.FC = () => {
     }
   };
 
+  // New function to handle dialog close and refresh
+  const handleDialogClose = () => {
+    setEditingJob(null);
+    fetchJobs(true); // Pass true to keep dialog closed
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-gray-900">🔧 Jobs & Faults</h2>
-        <Button 
-          onClick={() => setShowForm(true)} 
+        <Button
+          onClick={() => setShowForm(true)}
           className="bg-blue-600 hover:bg-blue-700"
           disabled={showForm}
         >
@@ -234,7 +312,7 @@ const JobsManager: React.FC = () => {
                 <Input
                   id="title"
                   value={formData.title}
-                  onChange={(e) => setFormData({...formData, title: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   placeholder="Enter job title..."
                   required
                   disabled={loading}
@@ -246,7 +324,7 @@ const JobsManager: React.FC = () => {
                 <Textarea
                   id="description"
                   value={formData.description}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Describe the issue or task..."
                   rows={3}
                   disabled={loading}
@@ -266,9 +344,12 @@ const JobsManager: React.FC = () => {
                     Scan Barcode
                   </Button>
                 </div>
-                
+
                 <MachineSerialSearch
-                  onMachineSelect={(machineId) => setFormData({...formData, machine_id: machineId})}
+                  onMachineSelect={(machineId) => {
+                    console.log('🔧 Machine selected via search:', machineId);
+                    setFormData({ ...formData, machine_id: machineId });
+                  }}
                   selectedMachineId={formData.machine_id}
                   label="Search by Serial Number, Name, or Barcode"
                   required
@@ -277,9 +358,9 @@ const JobsManager: React.FC = () => {
 
               <div>
                 <Label>Priority Level</Label>
-                <Select 
-                  value={formData.priority} 
-                  onValueChange={(value: 'low' | 'medium' | 'urgent') => setFormData({...formData, priority: value})}
+                <Select
+                  value={formData.priority}
+                  onValueChange={(value: 'low' | 'medium' | 'urgent') => setFormData({ ...formData, priority: value })}
                   disabled={loading}
                 >
                   <SelectTrigger>
@@ -296,16 +377,16 @@ const JobsManager: React.FC = () => {
               </div>
 
               <div className="flex gap-2">
-                <Button 
-                  type="submit" 
+                <Button
+                  type="submit"
                   className="bg-green-600 hover:bg-green-700"
                   disabled={loading || !formData.machine_id}
                 >
                   {loading ? 'Creating...' : 'Create Job'}
                 </Button>
-                <Button 
-                  type="button" 
-                  variant="outline" 
+                <Button
+                  type="button"
+                  variant="outline"
                   onClick={() => {
                     setShowForm(false);
                     setFormData({ title: '', description: '', machine_id: '', priority: 'medium' });
@@ -323,9 +404,9 @@ const JobsManager: React.FC = () => {
       <div className="grid gap-4">
         {jobs.map((job) => {
           const priorityInfo = priorityConfig[job.priority];
-          const statusInfo = statusConfig[job.status];
+          const statusInfo = getStatusConfig(job.status); // Use the safe function
           const PriorityIcon = priorityInfo.icon;
-          
+
           return (
             <Card key={job.id} className={`border-2 border-l-8 border-l-${job.priority === 'urgent' ? 'red' : job.priority === 'medium' ? 'yellow' : 'green'}-500`}>
               <CardHeader>
@@ -369,14 +450,14 @@ const JobsManager: React.FC = () => {
           </CardContent>
         </Card>
       )}
-      
+
       <JobEditDialog
         job={editingJob}
         open={!!editingJob}
-        onClose={() => setEditingJob(null)}
-        onUpdate={fetchJobs}
+        onClose={handleDialogClose} // Use the new handler
+        onUpdate={() => fetchJobs(true)} // Pass true to keep dialog closed after update
       />
-      
+
       <AutoBarcodeScanner
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}

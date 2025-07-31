@@ -18,13 +18,13 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onImageUploaded, currentImage
   const uploadImage = async (event: React.ChangeEvent<HTMLInputElement>) => {
     try {
       setUploading(true);
-      
+
       if (!event.target.files || event.target.files.length === 0) {
         throw new Error('You must select an image to upload.');
       }
 
       const file = event.target.files[0];
-      
+
       if (!file.type.startsWith('image/')) {
         throw new Error('Please select a valid image file.');
       }
@@ -33,9 +33,9 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onImageUploaded, currentImage
       const fileName = `${folder}/${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
 
       console.log('Uploading file:', fileName);
-      
+
       const { data, error: uploadError } = await supabase.storage
-        .from('images')
+        .from('venues')
         .upload(fileName, file, {
           cacheControl: '3600',
           upsert: false
@@ -51,7 +51,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onImageUploaded, currentImage
       }
 
       const { data: urlData } = supabase.storage
-        .from('images')
+        .from('venues')
         .getPublicUrl(data.path);
 
       if (!urlData?.publicUrl) {
@@ -63,10 +63,10 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onImageUploaded, currentImage
       toast({ title: 'Success', description: 'Image uploaded successfully!' });
     } catch (error: any) {
       console.error('Upload error:', error);
-      toast({ 
-        title: 'Error', 
-        description: error.message || 'Error uploading image', 
-        variant: 'destructive' 
+      toast({
+        title: 'Error',
+        description: error.message || 'Error uploading image',
+        variant: 'destructive'
       });
     } finally {
       setUploading(false);
@@ -93,10 +93,10 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onImageUploaded, currentImage
       {currentImage && (
         <div className="mt-2 flex justify-center">
           <div className="w-48 h-32 border rounded overflow-hidden bg-gray-50">
-            <img 
-              src={getImageUrl(currentImage)} 
-              alt="Preview" 
-              className="w-full h-full object-cover" 
+            <img
+              src={getImageUrl(currentImage)}
+              alt="Preview"
+              className="w-full h-full object-cover"
             />
           </div>
         </div>

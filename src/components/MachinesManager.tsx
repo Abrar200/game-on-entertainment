@@ -12,7 +12,12 @@ import MachineProfile from './MachineProfile';
 import PayoutCalculator from './PayoutCalculator';
 import { useToast } from '@/hooks/use-toast';
 
-export const MachinesManager: React.FC = () => {
+
+interface MachinesManagerProps {
+  readOnly?: boolean;
+}
+
+const MachinesManager: React.FC<MachinesManagerProps> = ({ readOnly = false }) => {
   const { machines, venues, deleteMachine, findMachineByBarcode } = useAppContext();
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');

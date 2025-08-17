@@ -12,7 +12,12 @@ import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import PrizeEditDialog from '@/components/PrizeEditDialog';
 import { createImageWithFallback } from '@/lib/imageUtils';
 
-const PrizesManager: React.FC = () => {
+
+interface PrizesManagerProps {
+  readOnly?: boolean;
+}
+
+const PrizesManager: React.FC<PrizesManagerProps> = ({ readOnly = false }) => {
   const { prizes, addPrize, deletePrize, updatePrizeStock } = useAppContext();
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);

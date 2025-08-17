@@ -1,181 +1,108 @@
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { Bell, Settings, Plus, FileText, Gamepad2, MapPin, Gift, Wrench, AlertTriangle, BookOpen, Download, ChevronDown, Database, Users, Home, BarChart3, History, LogOut, Upload, Map, Mail } from 'lucide-react';
-import { useAppContext } from '@/contexts/AppContext';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useToast } from '@/hooks/use-toast';
-import LogoUpload from './LogoUpload';
+import { 
+  Bell, Settings, Plus, FileText, Gamepad2, MapPin, Gift, Wrench, 
+  AlertTriangle, BookOpen, Download, ChevronDown, Database, Users, 
+  Home, BarChart3, History, LogOut, Upload, Map, Mail, Shield,
+  Crown, Eye, User, Loader2
+} from 'lucide-react';
 
 interface HeaderProps {
   onLogout: () => void;
+  userProfile?: {
+    role: string;
+    username?: string;
+    full_name?: string;
+    email: string;
+  } | null;
+  hasPermission: (permission: string) => boolean;
+  canAccessView: (view: string) => boolean;
+  currentView: string;
+  setCurrentView: (view: string) => void;
+  companyLogo: string;
+  setCompanyLogo: (logo: string) => void;
+  showToast: (message: { title: string; description: string; variant?: string; duration?: number }) => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onLogout }) => {
-  const { setCurrentView, companyLogo, setCompanyLogo, currentView } = useAppContext();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const { toast } = useToast();
+const ROLE_ICONS = {
+  super_admin: { icon: Crown, color: 'bg-purple-100 text-purple-800' },
+  admin: { icon: Shield, color: 'bg-red-100 text-red-800' },
+  manager: { icon: Users, color: 'bg-blue-100 text-blue-800' },
+  technician: { icon: Wrench, color: 'bg-green-100 text-green-800' },
+  viewer: { icon: Eye, color: 'bg-gray-100 text-gray-800' }
+};
+
+const Header: React.FC<HeaderProps> = ({ 
+  onLogout, 
+  userProfile, 
+  hasPermission, 
+  canAccessView,
+  currentView,
+  setCurrentView,
+  companyLogo,
+  setCompanyLogo,
+  showToast
+}) => {
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const showAlreadyHereMessage = (viewName: string) => {
-    toast({
+    showToast({
       title: "Already Here",
       description: `You are already in the ${viewName} section.`,
       duration: 2000,
     });
   };
 
-  const handleDashboard = (e: React.MouseEvent) => {
+  const createNavHandler = (view: string, viewName: string) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'dashboard') {
-      showAlreadyHereMessage('Dashboard');
+    
+    if (!canAccessView(view)) {
+      showToast({
+        title: "Access Denied",
+        description: `You don't have permission to access ${viewName}.`,
+        variant: "destructive",
+        duration: 3000,
+      });
       return;
     }
-    navigate('/');
-    setCurrentView('dashboard');
-  };
 
-  const handleGenerateReport = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'reports') {
-      showAlreadyHereMessage('Reports');
+    if (currentView === view) {
+      showAlreadyHereMessage(viewName);
       return;
     }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('reports'), 100);
-    } else {
-      setCurrentView('reports');
-    }
+    
+    setCurrentView(view);
   };
 
-  const handleJobs = (e: React.MouseEvent) => {
+  const handleLogout = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'jobs') {
-      showAlreadyHereMessage('Jobs');
-      return;
+    
+    setLoggingOut(true);
+    
+    try {
+      console.log('👋 Logout button clicked, initiating logout...');
+      await onLogout();
+      console.log('✅ Logout completed');
+    } catch (error) {
+      console.error('❌ Logout error:', error);
+      showToast({
+        title: "Error",
+        description: "Failed to logout. Please try again.",
+        variant: "destructive",
+      });
+      setLoggingOut(false);
     }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('jobs'), 100);
-    } else {
-      setCurrentView('jobs');
-    }
+    // Note: setLoggingOut(false) is not called on success because 
+    // the component will unmount when user is logged out
   };
 
-  const handleMachines = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'machines') {
-      showAlreadyHereMessage('Machines');
-      return;
-    }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('machines'), 100);
-    } else {
-      setCurrentView('machines');
-    }
-  };
-
-  const handleVenues = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'venues') {
-      showAlreadyHereMessage('Venues');
-      return;
-    }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('venues'), 100);
-    } else {
-      setCurrentView('venues');
-    }
-  };
-
-  const handleMap = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'map') {
-      showAlreadyHereMessage('Map');
-      return;
-    }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('map'), 100);
-    } else {
-      setCurrentView('map');
-    }
-  };
-
-  const handlePrizes = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'prizes') {
-      showAlreadyHereMessage('Prizes');
-      return;
-    }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('prizes'), 100);
-    } else {
-      setCurrentView('prizes');
-    }
-  };
-
-  const handleUsers = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'users') {
-      showAlreadyHereMessage('Users');
-      return;
-    }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('users'), 100);
-    } else {
-      setCurrentView('users');
-    }
-  };
-
-  const handleStockAnalytics = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'analytics') {
-      showAlreadyHereMessage('Stock Analytics');
-      return;
-    }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('analytics'), 100);
-    } else {
-      setCurrentView('analytics');
-    }
-  };
-
-  const handleEmailNotifications = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (location.pathname === '/' && currentView === 'email-notifications') {
-      showAlreadyHereMessage('Email Notifications');
-      return;
-    }
-    if (location.pathname !== '/') {
-      navigate('/');
-      setTimeout(() => setCurrentView('email-notifications'), 100);
-    } else {
-      setCurrentView('email-notifications');
-    }
-  };
-
-  const handleLogout = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onLogout();
-  };
+  // Get user role info for display
+  const roleInfo = userProfile ? ROLE_ICONS[userProfile.role as keyof typeof ROLE_ICONS] : null;
+  const RoleIcon = roleInfo?.icon || User;
 
   return (
     <header className="bg-gradient-to-r from-red-600 via-red-500 to-red-700 text-white shadow-lg">
@@ -206,30 +133,55 @@ const Header: React.FC<HeaderProps> = ({ onLogout }) => {
           </div>
           
           <div className="flex items-center space-x-2">
+            {/* User Info */}
+            {userProfile && (
+              <div className="flex items-center space-x-2 bg-white/10 rounded-lg px-3 py-2">
+                <div className={`p-1 rounded-full ${roleInfo?.color || 'bg-gray-100'}`}>
+                  <RoleIcon className="h-4 w-4" />
+                </div>
+                <div className="text-sm">
+                  <div className="font-medium">
+                    {userProfile.full_name || userProfile.username || 'User'}
+                  </div>
+                  <div className="text-red-200 text-xs capitalize">
+                    {userProfile.role.replace('_', ' ')}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Dashboard - Always visible */}
             <Button 
-              onClick={handleDashboard}
+              onClick={createNavHandler('dashboard', 'Dashboard')}
               className="bg-blue-600 hover:bg-blue-700 text-white font-semibold"
               type="button"
+              disabled={loggingOut}
             >
               <Home className="h-4 w-4 mr-2" />
               Dashboard
             </Button>
             
-            <Button 
-              onClick={handleMap}
-              className="bg-green-600 hover:bg-green-700 text-white font-semibold"
-              type="button"
-            >
-              <Map className="h-4 w-4 mr-2" />
-              Map
-            </Button>
+            {/* Map - Only if user can view venues */}
+            {canAccessView('map') && (
+              <Button 
+                onClick={createNavHandler('map', 'Map')}
+                className="bg-green-600 hover:bg-green-700 text-white font-semibold"
+                type="button"
+                disabled={loggingOut}
+              >
+                <Map className="h-4 w-4 mr-2" />
+                Map
+              </Button>
+            )}
             
+            {/* Management Dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button 
                   variant="ghost"
                   className="text-white hover:bg-white/20"
                   type="button"
+                  disabled={loggingOut}
                 >
                   <Database className="h-4 w-4 mr-2" />
                   Manage
@@ -237,86 +189,114 @@ const Header: React.FC<HeaderProps> = ({ onLogout }) => {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="bg-white">
-                <DropdownMenuItem onClick={handleMachines}>
-                  <Gamepad2 className="h-4 w-4 mr-2" />
-                  Machines
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleVenues}>
-                  <MapPin className="h-4 w-4 mr-2" />
-                  Venues
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handlePrizes}>
-                  <Gift className="h-4 w-4 mr-2" />
-                  Prizes
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleUsers}>
-                  <Users className="h-4 w-4 mr-2" />
-                  Users
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleStockAnalytics}>
-                  <BarChart3 className="h-4 w-4 mr-2" />
-                  Stock Analytics
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleEmailNotifications}>
-                  <Mail className="h-4 w-4 mr-2" />
-                  Email Notifications
-                </DropdownMenuItem>
+                {canAccessView('machines') && (
+                  <DropdownMenuItem onClick={createNavHandler('machines', 'Machines')}>
+                    <Gamepad2 className="h-4 w-4 mr-2" />
+                    Machines
+                  </DropdownMenuItem>
+                )}
+                {canAccessView('venues') && (
+                  <DropdownMenuItem onClick={createNavHandler('venues', 'Venues')}>
+                    <MapPin className="h-4 w-4 mr-2" />
+                    Venues
+                  </DropdownMenuItem>
+                )}
+                {canAccessView('prizes') && (
+                  <DropdownMenuItem onClick={createNavHandler('prizes', 'Prizes')}>
+                    <Gift className="h-4 w-4 mr-2" />
+                    Prizes
+                  </DropdownMenuItem>
+                )}
+                {canAccessView('users') && (
+                  <DropdownMenuItem onClick={createNavHandler('users', 'Users')}>
+                    <Users className="h-4 w-4 mr-2" />
+                    Users
+                  </DropdownMenuItem>
+                )}
+                {canAccessView('analytics') && (
+                  <DropdownMenuItem onClick={createNavHandler('analytics', 'Stock Analytics')}>
+                    <BarChart3 className="h-4 w-4 mr-2" />
+                    Stock Analytics
+                  </DropdownMenuItem>
+                )}
+                {canAccessView('email-notifications') && (
+                  <DropdownMenuItem onClick={createNavHandler('email-notifications', 'Email Notifications')}>
+                    <Mail className="h-4 w-4 mr-2" />
+                    Email Notifications
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
             
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button 
-                  variant="ghost"
-                  className="text-white hover:bg-white/20"
-                  type="button"
-                >
-                  <Settings className="h-4 w-4 mr-2" />
-                  App Management
-                  <ChevronDown className="h-4 w-4 ml-2" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="bg-white p-4 w-80">
-                <div className="space-y-3">
-                  <h3 className="font-medium text-gray-900">Company Branding</h3>
-                  <LogoUpload 
-                    onLogoUploaded={setCompanyLogo}
-                    currentLogo={companyLogo}
-                  />
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
             
-            <Button 
-              onClick={handleJobs}
-              variant="ghost"
-              className="text-white hover:bg-white/20"
-              type="button"
-            >
-              <Wrench className="h-4 w-4 mr-2" />
-              Jobs
-            </Button>
+            {/* Jobs - Always visible for jobs permission */}
+            {canAccessView('jobs') && (
+              <Button 
+                onClick={createNavHandler('jobs', 'Jobs')}
+                variant="ghost"
+                className="text-white hover:bg-white/20"
+                type="button"
+                disabled={loggingOut}
+              >
+                <Wrench className="h-4 w-4 mr-2" />
+                Jobs
+              </Button>
+            )}
             
-            <Button 
-              onClick={handleGenerateReport}
-              className="bg-white/20 text-white hover:bg-white/30 font-semibold border border-white/30"
-              type="button"
-            >
-              <FileText className="h-4 w-4 mr-2" />
-              Reports
-            </Button>
+            {/* Reports - Role-dependent access */}
+            {(hasPermission('view_financial_reports') || hasPermission('edit_machine_reports')) && (
+              <Button 
+                onClick={createNavHandler('reports', 'Reports')}
+                className="bg-white/20 text-white hover:bg-white/30 font-semibold border border-white/30"
+                type="button"
+                disabled={loggingOut}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Reports
+                {hasPermission('edit_machine_reports') && !hasPermission('view_financial_reports') && (
+                  <Badge variant="secondary" className="ml-2 text-xs">
+                    Maintenance Only
+                  </Badge>
+                )}
+              </Button>
+            )}
             
+            {/* Logout */}
             <Button 
               onClick={handleLogout}
               variant="ghost"
               className="text-white hover:bg-white/20"
               type="button"
+              disabled={loggingOut}
             >
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
+              {loggingOut ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Logging out...
+                </>
+              ) : (
+                <>
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Logout
+                </>
+              )}
             </Button>
           </div>
         </div>
+        
+        {/* Role-based information bar */}
+        {userProfile && (
+          <div className="mt-2 text-sm text-red-100">
+            <span className="opacity-75">
+              Logged in as {userProfile.role.replace('_', ' ').toLowerCase()} • 
+              {userProfile.role === 'technician' && ' You can manage jobs and create maintenance reports'}
+              {userProfile.role === 'viewer' && ' You have read-only access to system information'}
+              {userProfile.role === 'manager' && ' You can manage operations and view earnings'}
+              {userProfile.role === 'admin' && ' You have full operational access'}
+              {userProfile.role === 'super_admin' && ' You have complete system access'}
+            </span>
+          </div>
+        )}
       </div>
     </header>
   );

@@ -5,7 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MapPin, Building2, Key } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
-const VenueMap: React.FC = () => {
+interface VenueMapProps {
+  onClose?: () => void;
+}
+
+const VenueMap: React.FC<VenueMapProps> = ({ onClose }) => {
   const { venues } = useAppContext();
   
   // Replace this with your actual Google Maps API key

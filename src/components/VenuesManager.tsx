@@ -12,7 +12,12 @@ import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import VenueEditDialog from '@/components/VenueEditDialog';
 import { createImageWithFallback } from '@/lib/imageUtils';
 
-const VenuesManager: React.FC = () => {
+
+interface VenuesManagerProps {
+  readOnly?: boolean;
+}
+
+const VenuesManager: React.FC<VenuesManagerProps> = ({ readOnly = false }) => {
   const { venues, addVenue, deleteVenue } = useAppContext();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);

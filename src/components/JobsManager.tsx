@@ -6,13 +6,16 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Plus, AlertTriangle, Clock, CheckCircle, Edit, Scan } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Plus, AlertTriangle, Clock, CheckCircle, Edit, Scan, List, CalendarDays } from 'lucide-react';
 import { MachineSerialSearch } from './MachineSerialSearch';
 import { AutoBarcodeScanner } from './AutoBarcodeScanner';
 import JobEditDialog from './JobEditDialog';
+import JobsCalendar from './JobsCalendar';
 import { useAppContext } from '@/contexts/AppContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { format, parseISO } from 'date-fns';
 
 interface Job {
   id: string;
@@ -20,8 +23,9 @@ interface Job {
   description: string;
   machine_id: string;
   priority: 'low' | 'medium' | 'urgent';
-  status: string; // Changed to string to handle various status formats
+  status: string;
   created_at: string;
+  scheduled_date?: string;
   progress_updates?: string[];
   machine?: {
     name: string;
@@ -30,7 +34,15 @@ interface Job {
   };
 }
 
-const JobsManager: React.FC = () => {
+interface JobsManagerProps {
+  userRole?: string;
+  hasPermission?: (permission: string) => boolean;
+}
+
+const JobsManager: React.FC<JobsManagerProps> = ({ 
+  userRole = 'technician', 
+  hasPermission = () => true 
+}) => {
   const { machines, findMachineByBarcode } = useAppContext();
   const { toast } = useToast();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -38,6 +50,7 @@ const JobsManager: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('list');
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -51,7 +64,6 @@ const JobsManager: React.FC = () => {
     urgent: { label: 'Urgent Priority', color: 'bg-red-500 text-white', icon: AlertTriangle }
   };
 
-  // Updated statusConfig to handle both cases and include a fallback
   const getStatusConfig = (status: string) => {
     const normalizedStatus = status.toLowerCase();
     const statusConfigs = {
@@ -60,7 +72,6 @@ const JobsManager: React.FC = () => {
       'completed': { label: 'Completed', color: 'bg-green-500 text-white' },
       'pending': { label: 'Pending', color: 'bg-gray-500 text-white' }
     };
-
     return statusConfigs[normalizedStatus] || { label: status, color: 'bg-gray-500 text-white' };
   };
 
@@ -68,7 +79,6 @@ const JobsManager: React.FC = () => {
     fetchJobs();
   }, []);
 
-  // Fixed fetchJobs function - added keepEditingJobClosed parameter
   const fetchJobs = async (keepEditingJobClosed = false) => {
     try {
       console.log('📋 Fetching jobs...');
@@ -82,6 +92,7 @@ const JobsManager: React.FC = () => {
             venue:venues(name)
           )
         `)
+        .order('scheduled_date', { ascending: true })
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -92,7 +103,6 @@ const JobsManager: React.FC = () => {
       console.log('✅ Jobs fetched:', data?.length || 0);
       setJobs(data || []);
 
-      // Only update editingJob if we're not trying to close the dialog
       if (editingJob && data && !keepEditingJobClosed) {
         const updatedEditingJob = data.find(job => job.id === editingJob.id);
         if (updatedEditingJob) {
@@ -119,7 +129,6 @@ const JobsManager: React.FC = () => {
 
       if (error) {
         console.error('❌ Email notification error:', error);
-        // Don't fail the job creation if email fails
       } else {
         console.log('✅ Email notification sent');
       }
@@ -204,13 +213,12 @@ const JobsManager: React.FC = () => {
     try {
       console.log('💾 Creating job in database...');
 
-      // Use lowercase 'open' as the default status
       const jobData = {
         title: formData.title.trim(),
         description: formData.description.trim(),
         machine_id: formData.machine_id,
         priority: formData.priority,
-        status: 'pending' // Use lowercase consistently
+        status: 'pending'
       };
 
       console.log('📝 Job data to insert:', jobData);
@@ -234,17 +242,13 @@ const JobsManager: React.FC = () => {
 
       console.log('✅ Job created successfully:', data);
 
-      // Send email notification
       if (data && data[0]) {
         console.log('📧 Attempting to send notification...');
         await sendJobNotification(data[0], data[0].machine, data[0].machine?.venue);
       }
 
-      // Reset form and close
       setFormData({ title: '', description: '', machine_id: '', priority: 'medium' });
       setShowForm(false);
-
-      // Refresh jobs list
       await fetchJobs();
 
       toast({
@@ -280,10 +284,23 @@ const JobsManager: React.FC = () => {
     }
   };
 
-  // New function to handle dialog close and refresh
   const handleDialogClose = () => {
     setEditingJob(null);
-    fetchJobs(true); // Pass true to keep dialog closed
+    fetchJobs(true);
+  };
+
+  const handleJobSelect = (job: Job) => {
+    setEditingJob(job);
+  };
+
+  const formatScheduledDate = (dateString?: string) => {
+    if (!dateString) return null;
+    try {
+      return format(parseISO(dateString), 'MMM d, yyyy');
+    } catch (error) {
+      console.error('Error formatting date:', dateString, error);
+      return dateString;
+    }
   };
 
   return (
@@ -401,61 +418,84 @@ const JobsManager: React.FC = () => {
         </Card>
       )}
 
-      <div className="grid gap-4">
-        {jobs.map((job) => {
-          const priorityInfo = priorityConfig[job.priority];
-          const statusInfo = getStatusConfig(job.status); // Use the safe function
-          const PriorityIcon = priorityInfo.icon;
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="list" className="flex items-center gap-2">
+            <List className="h-4 w-4" />
+            Jobs List
+          </TabsTrigger>
+          <TabsTrigger value="calendar" className="flex items-center gap-2">
+            <CalendarDays className="h-4 w-4" />
+            Calendar View
+          </TabsTrigger>
+        </TabsList>
 
-          return (
-            <Card key={job.id} className={`border-2 border-l-8 border-l-${job.priority === 'urgent' ? 'red' : job.priority === 'medium' ? 'yellow' : 'green'}-500`}>
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      <CardTitle className="text-lg">{job.title}</CardTitle>
-                      <Badge className={priorityInfo.color}>
-                        <PriorityIcon className="h-3 w-3 mr-1" />
-                        {priorityInfo.label}
-                      </Badge>
-                      <Badge className={statusInfo.color}>
-                        {statusInfo.label}
-                      </Badge>
+        <TabsContent value="list" className="space-y-4">
+          {jobs.map((job) => {
+            const priorityInfo = priorityConfig[job.priority];
+            const statusInfo = getStatusConfig(job.status);
+            const PriorityIcon = priorityInfo.icon;
+            const scheduledDate = formatScheduledDate(job.scheduled_date);
+
+            return (
+              <Card key={job.id} className={`border-2 border-l-8 border-l-${job.priority === 'urgent' ? 'red' : job.priority === 'medium' ? 'yellow' : 'green'}-500`}>
+                <CardHeader>
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <CardTitle className="text-lg">{job.title}</CardTitle>
+                        <Badge className={priorityInfo.color}>
+                          <PriorityIcon className="h-3 w-3 mr-1" />
+                          {priorityInfo.label}
+                        </Badge>
+                        <Badge className={statusInfo.color}>
+                          {statusInfo.label}
+                        </Badge>
+                        {scheduledDate && (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                            📅 {scheduledDate}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-600">
+                        {job.machine?.name} - {job.machine?.type}
+                        {job.machine?.venue?.name && ` @ ${job.machine.venue.name}`}
+                      </p>
                     </div>
-                    <p className="text-sm text-gray-600">
-                      {job.machine?.name} - {job.machine?.type}
-                      {job.machine?.venue?.name && ` @ ${job.machine.venue.name}`}
-                    </p>
+                    <Button size="sm" variant="outline" onClick={() => setEditingJob(job)}>
+                      <Edit className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => setEditingJob(job)}>
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardHeader>
+                </CardHeader>
+                <CardContent>
+                  {job.description && <p className="text-gray-700 mb-2">{job.description}</p>}
+                  <p className="text-xs text-gray-500">
+                    Created: {new Date(job.created_at).toLocaleDateString()}
+                  </p>
+                </CardContent>
+              </Card>
+            );
+          })}
+
+          {jobs.length === 0 && (
+            <Card className="text-center py-8">
               <CardContent>
-                {job.description && <p className="text-gray-700 mb-2">{job.description}</p>}
-                <p className="text-xs text-gray-500">
-                  Created: {new Date(job.created_at).toLocaleDateString()}
-                </p>
+                <p className="text-gray-500">No jobs found. Click "Add New Job" to create one.</p>
               </CardContent>
             </Card>
-          );
-        })}
-      </div>
+          )}
+        </TabsContent>
 
-      {jobs.length === 0 && (
-        <Card className="text-center py-8">
-          <CardContent>
-            <p className="text-gray-500">No jobs found. Click "Add New Job" to create one.</p>
-          </CardContent>
-        </Card>
-      )}
+        <TabsContent value="calendar">
+          <JobsCalendar onJobSelect={handleJobSelect} />
+        </TabsContent>
+      </Tabs>
 
       <JobEditDialog
         job={editingJob}
         open={!!editingJob}
-        onClose={handleDialogClose} // Use the new handler
-        onUpdate={() => fetchJobs(true)} // Pass true to keep dialog closed after update
+        onClose={handleDialogClose}
+        onUpdate={() => fetchJobs(true)}
       />
 
       <AutoBarcodeScanner

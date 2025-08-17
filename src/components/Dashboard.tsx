@@ -5,7 +5,17 @@ import { useAppContext } from '@/contexts/AppContext';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Gamepad2, Gift, FileText, Package, AlertTriangle, Plus, BarChart3 } from 'lucide-react';
 
-const Dashboard: React.FC = () => {
+interface DashboardProps {
+  userProfile?: {
+    role: string;
+    username?: string;
+    full_name?: string;
+    email: string;
+  };
+  hasPermission?: (permission: string) => boolean;
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ userProfile, hasPermission }) => {
   const { venues = [], machines = [], prizes = [], setCurrentView } = useAppContext();
   const navigate = useNavigate();
 

@@ -7,16 +7,21 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Plus, Clock } from 'lucide-react';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Plus, Clock, CalendarIcon, X } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 interface Job {
   id: string;
   title: string;
   description: string;
   priority: 'low' | 'medium' | 'urgent';
-  status: string; // Changed to string to match JobsManager
+  status: string;
+  scheduled_date?: string;
   progress_updates?: string[];
   machine_id?: string;
   created_at?: string;
@@ -41,19 +46,17 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
     title: job?.title || '',
     description: job?.description || '',
     priority: job?.priority || 'medium',
-    status: job?.status || 'open'
+    status: job?.status || 'open',
+    scheduled_date: job?.scheduled_date || null
   });
   const [newUpdate, setNewUpdate] = useState('');
   const [showUpdateForm, setShowUpdateForm] = useState(false);
-  // Add local state to track progress updates for immediate display
   const [localProgressUpdates, setLocalProgressUpdates] = useState<string[]>([]);
 
-  // Function to normalize status for display and database operations
   const normalizeStatus = (status: string): string => {
     return status.toLowerCase();
   };
 
-  // Function to get status display label
   const getStatusLabel = (status: string): string => {
     const normalized = normalizeStatus(status);
     const labels = {
@@ -71,9 +74,9 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
         title: job.title,
         description: job.description,
         priority: job.priority,
-        status: normalizeStatus(job.status)
+        status: normalizeStatus(job.status),
+        scheduled_date: job.scheduled_date || null
       });
-      // Update local progress updates when job changes
       setLocalProgressUpdates(job.progress_updates || []);
     }
   }, [job]);
@@ -83,22 +86,28 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
 
     setLoading(true);
     try {
+      const updateData = {
+        title: formData.title,
+        description: formData.description,
+        priority: formData.priority,
+        status: formData.status,
+        scheduled_date: formData.scheduled_date
+      };
+
+      console.log('💾 Updating job with data:', updateData);
+
       const { error } = await supabase
         .from('jobs')
-        .update({
-          title: formData.title,
-          description: formData.description,
-          priority: formData.priority,
-          status: formData.status // This will be the normalized lowercase version
-        })
+        .update(updateData)
         .eq('id', job.id);
 
       if (error) throw error;
 
       toast({ title: 'Success', description: 'Job updated successfully!' });
-      onUpdate(); // This will refresh the data
-      onClose();  // This will close the dialog
+      onUpdate();
+      onClose();
     } catch (error) {
+      console.error('❌ Error updating job:', error);
       toast({ title: 'Error', description: 'Failed to update job', variant: 'destructive' });
     } finally {
       setLoading(false);
@@ -110,39 +119,29 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
 
     setLoading(true);
     try {
-      const updates = localProgressUpdates; // Use local state instead of job.progress_updates
+      const updates = localProgressUpdates;
       const timestamp = new Date().toISOString();
       const updateEntry = `${timestamp}: ${newUpdate.trim()}`;
       const newUpdatesArray = [...updates, updateEntry];
 
       console.log('📝 Adding progress update:', updateEntry);
-      console.log('🔍 Current updates:', updates);
-      console.log('📋 Job ID:', job.id);
 
       const { data, error } = await supabase
         .from('jobs')
         .update({ progress_updates: newUpdatesArray })
         .eq('id', job.id)
-        .select(); // Add select to see what was updated
+        .select();
 
       if (error) {
         console.error('❌ Progress update error:', error);
-        console.error('Error code:', error.code);
-        console.error('Error message:', error.message);
-        console.error('Error details:', error.details);
         throw error;
       }
 
       console.log('✅ Progress update successful:', data);
-
-      // Update local state immediately to show the new update
       setLocalProgressUpdates(newUpdatesArray);
-
       toast({ title: 'Success', description: 'Progress update added!' });
       setNewUpdate('');
       setShowUpdateForm(false);
-
-      // Still call onUpdate to refresh the parent list, but we don't need to wait for it
       onUpdate();
     } catch (error: any) {
       console.error('❌ Failed to add update:', error);
@@ -162,6 +161,30 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleScheduledDateChange = (date: Date | undefined) => {
+    setFormData({
+      ...formData,
+      scheduled_date: date ? date.toISOString() : null
+    });
+  };
+
+  const clearScheduledDate = () => {
+    setFormData({
+      ...formData,
+      scheduled_date: null
+    });
+  };
+
+  const getSelectedDate = (): Date | undefined => {
+    if (!formData.scheduled_date) return undefined;
+    try {
+      return parseISO(formData.scheduled_date);
+    } catch (error) {
+      console.error('Error parsing scheduled date:', formData.scheduled_date, error);
+      return undefined;
     }
   };
 
@@ -192,6 +215,52 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
               rows={3}
               disabled={loading}
             />
+          </div>
+
+          <div>
+            <Label>Scheduled Date</Label>
+            <div className="flex gap-2">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      'w-full justify-start text-left font-normal',
+                      !getSelectedDate() && 'text-muted-foreground'
+                    )}
+                    disabled={loading}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {getSelectedDate() ? format(getSelectedDate()!, 'PPP') : 'Pick a date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0">
+                  <Calendar
+                    mode="single"
+                    selected={getSelectedDate()}
+                    onSelect={handleScheduledDateChange}
+                    initialFocus
+                    disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
+                  />
+                </PopoverContent>
+              </Popover>
+              {getSelectedDate() && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={clearScheduledDate}
+                  disabled={loading}
+                  title="Clear scheduled date"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+            {getSelectedDate() && (
+              <p className="text-sm text-blue-600 mt-1">
+                Scheduled for: {format(getSelectedDate()!, 'EEEE, MMMM d, yyyy')}
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -261,7 +330,6 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
 
             <div className="space-y-2 max-h-40 overflow-y-auto">
               {localProgressUpdates && localProgressUpdates.length > 0 ? (
-                // Reverse the array to show latest updates first (most recent at top)
                 [...localProgressUpdates].reverse().map((update, index) => {
                   const [timestamp, ...messageParts] = update.split(': ');
                   const message = messageParts.join(': ');

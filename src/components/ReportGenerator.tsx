@@ -13,7 +13,11 @@ import MachineSelectInput from '@/components/MachineSelectInput';
 import VenueReportTemplate from '@/components/VenueReportTemplate';
 import ReportGeneratorPart2 from '@/components/ReportGeneratorPart2';
 
-const ReportGenerator: React.FC = () => {
+interface ReportGeneratorProps {
+  restrictedMode?: 'maintenance_only' | 'manager';
+}
+
+const ReportGenerator: React.FC<ReportGeneratorProps> = ({ restrictedMode }) => {
   const { machines = [], venues = [], setCurrentView, companyLogo, refreshData } = useAppContext();
   const { toast } = useToast();
   const [reportType, setReportType] = useState('machine');

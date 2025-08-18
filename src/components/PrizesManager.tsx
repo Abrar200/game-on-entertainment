@@ -49,94 +49,113 @@ const PrizesManager: React.FC<PrizesManagerProps> = ({ readOnly = false }) => {
 
   // FIX: Improved print barcode with proper JsBarcode loading
   const handlePrintBarcode = (barcode: string, prizeName: string) => {
-    const printWindow = window.open('', '_blank');
+    console.log('Printing prize barcode:', barcode);
+    
+    // Get the canvas element from the current barcode display
+    const barcodeDisplays = document.querySelectorAll('.barcode-canvas');
+    let canvas: HTMLCanvasElement | null = null;
+    
+    // Find the canvas for this specific barcode
+    barcodeDisplays.forEach((canvasElement) => {
+      const canvasEl = canvasElement as HTMLCanvasElement;
+      // Check if this canvas is in the same card as our prize
+      const cardElement = canvasEl.closest('.hover\\:shadow-lg');
+      if (cardElement) {
+        const cardText = cardElement.textContent || '';
+        if (cardText.includes(prizeName)) {
+          canvas = canvasEl;
+        }
+      }
+    });
+    
+    if (!canvas) {
+      alert('Barcode not found. Please wait for the barcode to load.');
+      return;
+    }
+    
+    // Convert canvas to data URL
+    const barcodeDataUrl = canvas.toDataURL('image/png');
+    
+    // Create a print-friendly HTML content
+    const printContent = `
+      <html>
+        <head>
+          <title>Prize Barcode - ${prizeName}</title>
+          <style>
+            @media print {
+              body { margin: 0; padding: 20px; }
+              .no-print { display: none !important; }
+            }
+            body { 
+              font-family: Arial, sans-serif; 
+              text-align: center; 
+              margin: 40px;
+              background: white;
+            }
+            .barcode-container { 
+              border: 2px solid #000; 
+              padding: 20px; 
+              display: inline-block;
+              background: white;
+            }
+            .prize-name { 
+              font-size: 18px; 
+              font-weight: bold; 
+              margin-bottom: 20px; 
+            }
+            .barcode-image {
+              margin: 20px 0;
+              max-width: 100%;
+              height: auto;
+            }
+            .barcode-text { 
+              font-family: monospace; 
+              font-size: 14px; 
+              margin-top: 10px; 
+              font-weight: bold;
+            }
+            .print-instructions {
+              margin-top: 20px;
+              font-size: 12px;
+              color: #666;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="barcode-container">
+            <div class="prize-name">${prizeName}</div>
+            <img src="${barcodeDataUrl}" alt="Barcode" class="barcode-image" />
+            <div class="barcode-text">${barcode}</div>
+          </div>
+          <div class="print-instructions no-print">
+            <p>Click Print or use Ctrl+P to print this barcode</p>
+          </div>
+          <script>
+            // Auto-trigger print dialog after page loads
+            window.addEventListener('load', function() {
+              setTimeout(() => {
+                window.print();
+              }, 500);
+            });
+            
+            // Close window after printing or canceling
+            window.addEventListener('afterprint', () => {
+              setTimeout(() => window.close(), 1000);
+            });
+          </script>
+        </body>
+      </html>
+    `;
+    
+    // Open print window
+    const printWindow = window.open('', '_blank', 'width=600,height=400');
     if (printWindow) {
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Print Barcode - ${prizeName}</title>
-            <style>
-              body { 
-                margin: 0; 
-                padding: 20px; 
-                font-family: Arial, sans-serif; 
-                display: flex; 
-                flex-direction: column; 
-                align-items: center; 
-              }
-              .barcode-container { 
-                text-align: center; 
-                margin: 20px; 
-                page-break-inside: avoid; 
-              }
-              .prize-name { 
-                font-size: 14px; 
-                font-weight: bold; 
-                margin-bottom: 10px; 
-              }
-              .barcode-text { 
-                font-size: 10px; 
-                margin-top: 5px; 
-                font-family: monospace; 
-              }
-              canvas { 
-                border: 1px solid #ccc; 
-              }
-              @media print {
-                body { margin: 0; }
-                .no-print { display: none; }
-              }
-            </style>
-          </head>
-          <body>
-            <div class="barcode-container">
-              <div class="prize-name">${prizeName}</div>
-              <canvas id="barcode"></canvas>
-              <div class="barcode-text">${barcode}</div>
-            </div>
-            <script>
-              // Wait for JsBarcode to load, then generate barcode
-              function loadJsBarcode() {
-                return new Promise((resolve, reject) => {
-                  const script = document.createElement('script');
-                  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js';
-                  script.onload = resolve;
-                  script.onerror = reject;
-                  document.head.appendChild(script);
-                });
-              }
-
-              loadJsBarcode().then(() => {
-                const canvas = document.getElementById('barcode');
-                if (window.JsBarcode && canvas) {
-                  JsBarcode(canvas, "${barcode}", {
-                    format: "CODE128",
-                    width: 2,
-                    height: 60,
-                    displayValue: false
-                  });
-                  
-                  // Auto print after barcode is generated
-                  setTimeout(() => {
-                    window.print();
-                  }, 500);
-                } else {
-                  console.error('JsBarcode failed to load or canvas not found');
-                  alert('Failed to generate barcode for printing');
-                }
-              }).catch(error => {
-                console.error('Failed to load JsBarcode:', error);
-                alert('Failed to load barcode library');
-              });
-
-              window.onafterprint = function() {
-                window.close();
-              };
-            </script>
-          </body>
-        </html>
-      `);
+      printWindow.document.write(printContent);
       printWindow.document.close();
+      printWindow.focus();
+    } else {
+      // Fallback: use browser's native print for current page
+      alert('Pop-up blocked. Please allow pop-ups for printing or use your browser\'s print function.');
     }
   };
 

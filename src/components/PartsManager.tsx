@@ -11,7 +11,7 @@ import ImageUpload from '@/components/ImageUpload';
 import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import AutoBarcodeScanner from '@/components/AutoBarcodeScanner';
 import BarcodeGenerator from '@/components/BarcodeGenerator';
-import { generateMachineBarcode } from '@/lib/barcodeUtils';
+import { generateMachineBarcode, validateBarcodeValue } from '@/lib/barcodeUtils';
 import { createImageWithFallback } from '@/lib/imageUtils';
 
 interface Part {
@@ -245,7 +245,6 @@ const PartsManager: React.FC = () => {
     }
   };
 
-  // FIX: Handle part-specific barcode scanning
   const handleScanResult = async (barcode: string) => {
     console.log('📱 Scanned barcode in PartsManager:', barcode);
     try {
@@ -279,96 +278,123 @@ const PartsManager: React.FC = () => {
     setIsScannerOpen(false);
   };
 
-  // FIX: Improved print barcode with proper JsBarcode loading
+  // Fixed print barcode function - same approach as MachineBarcodeDisplay
   const handlePrintBarcode = (barcode: string, partName: string) => {
-    const printWindow = window.open('', '_blank');
+    console.log('Printing part barcode:', barcode);
+    
+    // Validate barcode before printing
+    const validation = validateBarcodeValue(barcode);
+    if (!validation.isValid) {
+      console.error('Invalid barcode for printing:', validation.error);
+      alert(`Cannot print barcode: ${validation.error}`);
+      return;
+    }
+    
+    // Get the canvas element from the current barcode display
+    const barcodeDisplays = document.querySelectorAll('.barcode-canvas');
+    let canvas: HTMLCanvasElement | null = null;
+    
+    // Find the canvas for this specific barcode
+    barcodeDisplays.forEach((canvasElement) => {
+      const canvasEl = canvasElement as HTMLCanvasElement;
+      // Check if this canvas is in the same card as our part
+      const cardElement = canvasEl.closest('.hover\\:shadow-lg');
+      if (cardElement) {
+        const cardText = cardElement.textContent || '';
+        if (cardText.includes(partName)) {
+          canvas = canvasEl;
+        }
+      }
+    });
+    
+    if (!canvas) {
+      alert('Barcode not found. Please wait for the barcode to load.');
+      return;
+    }
+    
+    // Convert canvas to data URL
+    const barcodeDataUrl = canvas.toDataURL('image/png');
+    
+    // Create a print-friendly HTML content
+    const printContent = `
+      <html>
+        <head>
+          <title>Part Barcode - ${partName}</title>
+          <style>
+            @media print {
+              body { margin: 0; padding: 20px; }
+              .no-print { display: none !important; }
+            }
+            body { 
+              font-family: Arial, sans-serif; 
+              text-align: center; 
+              margin: 40px;
+              background: white;
+            }
+            .barcode-container { 
+              border: 2px solid #000; 
+              padding: 20px; 
+              display: inline-block;
+              background: white;
+            }
+            .part-name { 
+              font-size: 18px; 
+              font-weight: bold; 
+              margin-bottom: 20px; 
+            }
+            .barcode-image {
+              margin: 20px 0;
+              max-width: 100%;
+              height: auto;
+            }
+            .barcode-text { 
+              font-family: monospace; 
+              font-size: 14px; 
+              margin-top: 10px; 
+              font-weight: bold;
+            }
+            .print-instructions {
+              margin-top: 20px;
+              font-size: 12px;
+              color: #666;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="barcode-container">
+            <div class="part-name">${partName}</div>
+            <img src="${barcodeDataUrl}" alt="Barcode" class="barcode-image" />
+            <div class="barcode-text">${barcode}</div>
+          </div>
+          <div class="print-instructions no-print">
+            <p>Click Print or use Ctrl+P to print this barcode</p>
+          </div>
+          <script>
+            // Auto-trigger print dialog after page loads
+            window.addEventListener('load', function() {
+              setTimeout(() => {
+                window.print();
+              }, 500);
+            });
+            
+            // Close window after printing or canceling
+            window.addEventListener('afterprint', () => {
+              setTimeout(() => window.close(), 1000);
+            });
+          </script>
+        </body>
+      </html>
+    `;
+    
+    // Open print window
+    const printWindow = window.open('', '_blank', 'width=600,height=400');
     if (printWindow) {
-      printWindow.document.write(`
-        <html>
-          <head>
-            <title>Print Barcode - ${partName}</title>
-            <style>
-              body { 
-                margin: 0; 
-                padding: 20px; 
-                font-family: Arial, sans-serif; 
-                display: flex; 
-                flex-direction: column; 
-                align-items: center; 
-              }
-              .barcode-container { 
-                text-align: center; 
-                margin: 20px; 
-                page-break-inside: avoid; 
-              }
-              .part-name { 
-                font-size: 14px; 
-                font-weight: bold; 
-                margin-bottom: 10px; 
-              }
-              .barcode-text { 
-                font-size: 10px; 
-                margin-top: 5px; 
-                font-family: monospace; 
-              }
-              canvas { 
-                border: 1px solid #ccc; 
-              }
-              @media print {
-                body { margin: 0; }
-                .no-print { display: none; }
-              }
-            </style>
-          </head>
-          <body>
-            <div class="barcode-container">
-              <div class="part-name">${partName}</div>
-              <canvas id="barcode"></canvas>
-              <div class="barcode-text">${barcode}</div>
-            </div>
-            <script>
-              // Wait for JsBarcode to load, then generate barcode
-              function loadJsBarcode() {
-                return new Promise((resolve, reject) => {
-                  const script = document.createElement('script');
-                  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js';
-                  script.onload = resolve;
-                  script.onerror = reject;
-                  document.head.appendChild(script);
-                });
-              }
-
-              loadJsBarcode().then(() => {
-                const canvas = document.getElementById('barcode');
-                if (window.JsBarcode && canvas) {
-                  JsBarcode(canvas, "${barcode}", {
-                    format: "CODE128",
-                    width: 2,
-                    height: 60,
-                    displayValue: false
-                  });
-                  
-                  // Auto print after barcode is generated
-                  setTimeout(() => {
-                    window.print();
-                  }, 500);
-                } else {
-                  console.error('JsBarcode failed to load or canvas not found');
-                  alert('Failed to generate barcode for printing');
-                }
-              }).catch(error => {
-                console.error('Failed to load JsBarcode:', error);
-                alert('Failed to load barcode library');
-              });
-
-              window.onafterprint = function() {
-                window.close();
-              };
-            </script>
-          </body>
-        </html>
-      `);
+      printWindow.document.write(printContent);
       printWindow.document.close();
+      printWindow.focus();
+    } else {
+      // Fallback: use browser's native print for current page
+      alert('Pop-up blocked. Please allow pop-ups for printing or use your browser\'s print function.');
     }
   };
 
@@ -532,7 +558,6 @@ const PartsManager: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* FIX: Use proper image handling */}
               {part.image_url && (
                 <div className="mb-4">
                   <img

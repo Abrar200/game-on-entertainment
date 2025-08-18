@@ -105,12 +105,14 @@ interface Prize {
   cost: number;
   stock_quantity: number;
   image_url?: string;
+  barcode?: string;
 }
 
 interface MachineStock {
   machine_id: string;
   prize_id: string;
   quantity: number;
+  notes?: string | null;
 }
 
 interface MachineReport {
@@ -123,6 +125,18 @@ interface MachineReport {
   previous_toy_count: number;
   created_at: string;
   report_date?: string;
+}
+
+interface Part {
+  cost_price: number;
+  id: string;
+  name: string;
+  cost: number;
+  stock_quantity: number;
+  image_url?: string;
+  barcode?: string;
+  low_stock_limit: number;
+  created_at: string;
 }
 
 
@@ -153,6 +167,12 @@ interface AppContextType {
   findMachineByBarcode: (barcode: string) => Promise<Machine>;
   selectedMachineForHistory: Machine | null;
   setSelectedMachineForHistory: (machine: Machine | null) => void;
+  parts: Part[];
+  addPart: (part: Omit<Part, 'id' | 'created_at'>) => Promise<void>;
+  deletePart: (id: string) => Promise<void>;
+  updatePart: (id: string, part: Partial<Part>) => Promise<void>;
+  updatePartStock: (id: string, quantity: number) => Promise<void>;
+  findPartByBarcode: (barcode: string) => Promise<Part>;
   // Add this line:
   logStockMovement: (
     itemType: 'prize' | 'part',
@@ -193,7 +213,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [reports, setReports] = useState<MachineReport[]>([]);
   const [companyLogo, setCompanyLogo] = useState('');
   const [selectedMachineForHistory, setSelectedMachineForHistory] = useState<Machine | null>(null);
+  const [parts, setParts] = useState<Part[]>([]);
   const { toast } = useToast();
+
+
+  const generatePartBarcode = (name: string): string => {
+    const cleanName = name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 8);
+    const timestamp = Date.now().toString().slice(-4);
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `PART_${cleanName}_${timestamp}_${random}`;
+  };
+
+  const generatePrizeBarcode = (name: string): string => {
+    const cleanName = name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 8);
+    const timestamp = Date.now().toString().slice(-4);
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `PRIZE_${cleanName}_${timestamp}_${random}`;
+  };
 
   const toggleSidebar = () => setSidebarOpen(prev => !prev);
 
@@ -215,10 +251,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const refreshData = async () => {
     try {
-      const [venuesRes, machinesRes, prizesRes, reportsRes, stockRes] = await Promise.all([
+      const [venuesRes, machinesRes, prizesRes, partsRes, reportsRes, stockRes] = await Promise.all([
         supabase.from('venues').select('*'),
         supabase.from('machines').select('*, venues(*), prizes(*)'),
         supabase.from('prizes').select('*'),
+        supabase.from('parts').select('*'),
         supabase.from('machine_reports').select('*').order('report_date', { ascending: false }),
         supabase.from('machine_stock').select('*')
       ]);
@@ -232,6 +269,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         })));
       }
       if (prizesRes.data) setPrizes(prizesRes.data);
+      if (partsRes.data) setParts(partsRes.data);
       if (reportsRes.data) setReports(reportsRes.data);
       if (stockRes.data) setMachineStock(stockRes.data);
     } catch (error) {
@@ -307,13 +345,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       console.log('Adding prize with data:', prize);
 
+      const barcode = prize.barcode || generatePrizeBarcode(prize.name);
+
       const prizeData = {
         name: prize.name,
         cost: prize.cost,
         stock_quantity: prize.stock_quantity,
         image_url: prize.image_url,
         category: prize.category || null,
-        description: prize.description || null
+        description: prize.description || null,
+        barcode
       };
 
       console.log('Final prize data for database:', prizeData);
@@ -434,7 +475,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
 
-  const addMachineStock = async (stock: MachineStock) => {
+  const addMachineStock = async (stock: MachineStock & { notes?: string }) => {
     try {
       // Add to machine_stock table
       const { error: stockError } = await supabase
@@ -451,12 +492,120 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         stock.quantity,
         'machine_stock',
         stock.machine_id,
-        `Added ${stock.quantity} prizes to machine`
+        stock.notes || `Added ${stock.quantity} prizes to machine`
       );
 
       await refreshData();
     } catch (error) {
       console.error('Error adding machine stock:', error);
+      throw error;
+    }
+  };
+  
+  const addPart = async (part: Omit<Part, 'id' | 'created_at'>) => {
+    try {
+      console.log('Adding part with data:', part);
+
+      const barcode = part.barcode || generatePartBarcode(part.name);
+
+      const partData = {
+        ...part,
+        barcode
+      };
+
+      console.log('Final part data for database:', partData);
+
+      const { data, error } = await supabase
+        .from('parts')
+        .insert([partData])
+        .select();
+
+      if (error) {
+        console.error('Supabase error:', error);
+        throw new Error(`Database error: ${error.message}`);
+      }
+
+      console.log('Successfully inserted part:', data);
+      await refreshData();
+
+    } catch (error) {
+      console.error('Error in addPart:', error);
+      throw error;
+    }
+  };
+
+  const deletePart = async (id: string) => {
+    const { error } = await supabase.from('parts').delete().eq('id', id);
+    if (error) throw error;
+    await refreshData();
+  };
+
+  const updatePart = async (id: string, part: Partial<Part>) => {
+    const { error } = await supabase.from('parts').update(part).eq('id', id);
+    if (error) throw error;
+    await refreshData();
+    toast({ title: 'Success', description: 'Part updated successfully' });
+  };
+
+  const updatePartStock = async (id: string, quantity: number) => {
+    try {
+      // Get current stock level
+      const { data: currentPart } = await supabase
+        .from('parts')
+        .select('stock_quantity')
+        .eq('id', id)
+        .single();
+
+      const currentStock = currentPart?.stock_quantity || 0;
+      const difference = quantity - currentStock;
+
+      // Update the stock
+      const { error } = await supabase
+        .from('parts')
+        .update({ stock_quantity: quantity })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      // Log the stock movement
+      if (difference !== 0) {
+        await logStockMovement(
+          'part',
+          id,
+          difference > 0 ? 'in' : 'out',
+          Math.abs(difference),
+          'stock_adjustment',
+          undefined,
+          `Stock ${difference > 0 ? 'increased' : 'decreased'} by ${Math.abs(difference)}`
+        );
+      }
+
+      await refreshData();
+    } catch (error) {
+      console.error('Error updating part stock:', error);
+      throw error;
+    }
+  };
+
+  const findPartByBarcode = async (barcode: string): Promise<Part> => {
+    try {
+      console.log('🔍 Searching for part with barcode:', barcode);
+
+      const { data, error } = await supabase
+        .from('parts')
+        .select('*')
+        .eq('barcode', barcode)
+        .single();
+
+      if (error || !data) {
+        throw new Error(`No part found with barcode: ${barcode}`);
+      }
+
+      console.log('✅ Part found:', data.name);
+      return data;
+
+    } catch (error) {
+      console.error('❌ Error finding part by barcode:', error);
       throw error;
     }
   };
@@ -519,7 +668,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addMachineStock,
     logStockMovement,
     selectedMachineForHistory,
-    setSelectedMachineForHistory
+    setSelectedMachineForHistory,
+    parts,
+    addPart,
+    deletePart,
+    updatePart,
+    updatePartStock,
+    findPartByBarcode,
   };
 
   return (

@@ -6,7 +6,7 @@ import {
   Bell, Settings, Plus, FileText, Gamepad2, MapPin, Gift, Wrench, 
   AlertTriangle, BookOpen, Download, ChevronDown, Database, Users, 
   Home, BarChart3, History, LogOut, Upload, Map, Mail, Shield,
-  Crown, Eye, User, Loader2
+  Crown, Eye, User, Loader2, Cog // Add Cog for parts icon
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -205,6 +205,12 @@ const Header: React.FC<HeaderProps> = ({
                   <DropdownMenuItem onClick={createNavHandler('prizes', 'Prizes')}>
                     <Gift className="h-4 w-4 mr-2" />
                     Prizes
+                  </DropdownMenuItem>
+                )}
+                {hasPermission('manage_stock') && canAccessView('parts') && (
+                  <DropdownMenuItem onClick={createNavHandler('parts', 'Parts')}>
+                    <Cog className="h-4 w-4 mr-2" />
+                    Parts
                   </DropdownMenuItem>
                 )}
                 {canAccessView('users') && (

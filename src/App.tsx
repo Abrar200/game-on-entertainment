@@ -135,6 +135,7 @@ const AppContent = () => {
 
   // Show main app if authenticated
   console.log('🏠 App: Showing main app for user:', userProfile.email);
+  console.log('🛠️ canAccessView parts:', canAccessView('parts'));
   
   return (
     <AppProvider>

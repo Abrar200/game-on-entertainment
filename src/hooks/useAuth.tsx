@@ -409,7 +409,7 @@ export const useAuth = () => {
 
   const canAccessView = (view: string): boolean => {
     if (!userProfile) return false;
-
+  
     const viewPermissions = {
       'users': 'view_users',
       'reports': 'view_financial_reports',
@@ -420,14 +420,16 @@ export const useAuth = () => {
       'analytics': 'view_analytics',
       'email-notifications': 'manage_email_notifications',
       'dashboard': 'always',
-      'map': 'view_venues'
+      'map': 'view_venues',
+      'parts': 'manage_stock'  // <-- Add this line
     };
-
+  
     const requiredPermission = viewPermissions[view];
     if (requiredPermission === 'always') return true;
-    
+  
     return requiredPermission ? hasPermission(requiredPermission) : false;
   };
+  
 
   return {
     isAuthenticated,

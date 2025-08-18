@@ -47,6 +47,7 @@ const PrizesManager: React.FC<PrizesManagerProps> = ({ readOnly = false }) => {
     return `PRIZE_${cleanName}_${timestamp}_${random}`;
   };
 
+  // FIX: Improved print barcode with proper JsBarcode loading
   const handlePrintBarcode = (barcode: string, prizeName: string) => {
     const printWindow = window.open('', '_blank');
     if (printWindow) {
@@ -93,16 +94,41 @@ const PrizesManager: React.FC<PrizesManagerProps> = ({ readOnly = false }) => {
               <canvas id="barcode"></canvas>
               <div class="barcode-text">${barcode}</div>
             </div>
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
             <script>
-              const canvas = document.getElementById('barcode');
-              JsBarcode(canvas, "${barcode}", {
-                format: "CODE128",
-                width: 2,
-                height: 60,
-                displayValue: false
+              // Wait for JsBarcode to load, then generate barcode
+              function loadJsBarcode() {
+                return new Promise((resolve, reject) => {
+                  const script = document.createElement('script');
+                  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js';
+                  script.onload = resolve;
+                  script.onerror = reject;
+                  document.head.appendChild(script);
+                });
+              }
+
+              loadJsBarcode().then(() => {
+                const canvas = document.getElementById('barcode');
+                if (window.JsBarcode && canvas) {
+                  JsBarcode(canvas, "${barcode}", {
+                    format: "CODE128",
+                    width: 2,
+                    height: 60,
+                    displayValue: false
+                  });
+                  
+                  // Auto print after barcode is generated
+                  setTimeout(() => {
+                    window.print();
+                  }, 500);
+                } else {
+                  console.error('JsBarcode failed to load or canvas not found');
+                  alert('Failed to generate barcode for printing');
+                }
+              }).catch(error => {
+                console.error('Failed to load JsBarcode:', error);
+                alert('Failed to load barcode library');
               });
-              window.print();
+
               window.onafterprint = function() {
                 window.close();
               };
@@ -202,7 +228,9 @@ const PrizesManager: React.FC<PrizesManagerProps> = ({ readOnly = false }) => {
     setIsEditDialogOpen(true);
   };
 
+  // FIX: Handle prize-specific barcode scanning
   const handleScanResult = async (barcode: string) => {
+    console.log('📱 Scanned barcode in PrizesManager:', barcode);
     try {
       const { data, error } = await supabase
         .from('prizes')
@@ -213,6 +241,7 @@ const PrizesManager: React.FC<PrizesManagerProps> = ({ readOnly = false }) => {
       if (error) throw error;
 
       if (data) {
+        console.log('✅ Prize found by barcode:', data);
         openEditDialog(data.id);
         toast({
           title: 'Prize Found!',
@@ -220,6 +249,7 @@ const PrizesManager: React.FC<PrizesManagerProps> = ({ readOnly = false }) => {
         });
       }
     } catch (error) {
+      console.error('❌ Prize not found or error:', error);
       toast({
         title: 'Prize Not Found',
         description: `No prize found with barcode: ${barcode}`,
@@ -364,6 +394,7 @@ const PrizesManager: React.FC<PrizesManagerProps> = ({ readOnly = false }) => {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                {/* FIX: Use proper image handling */}
                 {prize.image_url && (
                   <div className="mb-4">
                     <img

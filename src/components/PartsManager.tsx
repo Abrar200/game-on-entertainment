@@ -12,11 +12,12 @@ import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import AutoBarcodeScanner from '@/components/AutoBarcodeScanner';
 import BarcodeGenerator from '@/components/BarcodeGenerator';
 import { generateMachineBarcode } from '@/lib/barcodeUtils';
+import { createImageWithFallback } from '@/lib/imageUtils';
 
 interface Part {
   id: string;
   name: string;
-  cost_price: number; // Updated to match database schema
+  cost_price: number;
   stock_quantity: number;
   image_url?: string;
   barcode?: string;
@@ -37,7 +38,7 @@ const PartsManager: React.FC = () => {
   });
   const [formData, setFormData] = useState({
     name: '',
-    cost_price: '', // Updated to match database schema
+    cost_price: '',
     stock_quantity: '',
     low_stock_limit: '5',
     image_url: ''
@@ -85,7 +86,6 @@ const PartsManager: React.FC = () => {
 
     if (lowStockParts.length > 0) {
       console.log('⚠️ Low stock parts found:', lowStockParts);
-      // Send email notification for low stock parts
       try {
         await supabase.functions.invoke('send-low-stock-email', {
           body: {
@@ -136,7 +136,7 @@ const PartsManager: React.FC = () => {
       
       const partData = {
         name: formData.name.trim(),
-        cost_price: parseFloat(formData.cost_price), // Updated to match database schema
+        cost_price: parseFloat(formData.cost_price),
         stock_quantity: parseInt(formData.stock_quantity) || 0,
         low_stock_limit: parseInt(formData.low_stock_limit) || 5,
         image_url: formData.image_url || null,
@@ -173,7 +173,7 @@ const PartsManager: React.FC = () => {
     setSelectedPart(part);
     setFormData({
       name: part.name,
-      cost_price: part.cost_price.toString(), // Updated to match database schema
+      cost_price: part.cost_price.toString(),
       stock_quantity: part.stock_quantity.toString(),
       low_stock_limit: part.low_stock_limit.toString(),
       image_url: part.image_url || ''
@@ -190,7 +190,7 @@ const PartsManager: React.FC = () => {
     try {
       const partData = {
         name: formData.name.trim(),
-        cost_price: parseFloat(formData.cost_price) || 0, // Updated to match database schema
+        cost_price: parseFloat(formData.cost_price) || 0,
         stock_quantity: parseInt(formData.stock_quantity) || 0,
         low_stock_limit: parseInt(formData.low_stock_limit) || 5,
         image_url: formData.image_url || null
@@ -245,8 +245,9 @@ const PartsManager: React.FC = () => {
     }
   };
 
+  // FIX: Handle part-specific barcode scanning
   const handleScanResult = async (barcode: string) => {
-    console.log('📱 Scanned barcode:', barcode);
+    console.log('📱 Scanned barcode in PartsManager:', barcode);
     try {
       const { data, error } = await supabase
         .from('parts')
@@ -278,6 +279,7 @@ const PartsManager: React.FC = () => {
     setIsScannerOpen(false);
   };
 
+  // FIX: Improved print barcode with proper JsBarcode loading
   const handlePrintBarcode = (barcode: string, partName: string) => {
     const printWindow = window.open('', '_blank');
     if (printWindow) {
@@ -324,16 +326,41 @@ const PartsManager: React.FC = () => {
               <canvas id="barcode"></canvas>
               <div class="barcode-text">${barcode}</div>
             </div>
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js"></script>
             <script>
-              const canvas = document.getElementById('barcode');
-              JsBarcode(canvas, "${barcode}", {
-                format: "CODE128",
-                width: 2,
-                height: 60,
-                displayValue: false
+              // Wait for JsBarcode to load, then generate barcode
+              function loadJsBarcode() {
+                return new Promise((resolve, reject) => {
+                  const script = document.createElement('script');
+                  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js';
+                  script.onload = resolve;
+                  script.onerror = reject;
+                  document.head.appendChild(script);
+                });
+              }
+
+              loadJsBarcode().then(() => {
+                const canvas = document.getElementById('barcode');
+                if (window.JsBarcode && canvas) {
+                  JsBarcode(canvas, "${barcode}", {
+                    format: "CODE128",
+                    width: 2,
+                    height: 60,
+                    displayValue: false
+                  });
+                  
+                  // Auto print after barcode is generated
+                  setTimeout(() => {
+                    window.print();
+                  }, 500);
+                } else {
+                  console.error('JsBarcode failed to load or canvas not found');
+                  alert('Failed to generate barcode for printing');
+                }
+              }).catch(error => {
+                console.error('Failed to load JsBarcode:', error);
+                alert('Failed to load barcode library');
               });
-              window.print();
+
               window.onafterprint = function() {
                 window.close();
               };
@@ -505,12 +532,13 @@ const PartsManager: React.FC = () => {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* FIX: Use proper image handling */}
               {part.image_url && (
                 <div className="mb-4">
-                  <img 
-                    src={part.image_url} 
-                    alt={part.name}
+                  <img
+                    {...createImageWithFallback(part.image_url, part.name, 'prize')}
                     className="w-full h-32 object-cover rounded"
+                    crossOrigin="anonymous"
                   />
                 </div>
               )}

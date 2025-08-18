@@ -11,12 +11,14 @@ interface AutoBarcodeScannerProps {
   isOpen: boolean;
   onClose: () => void;
   onScan: (barcode: string) => void;
+  scanMode?: 'machine' | 'prize' | 'part' | 'auto'; // Add scan mode for context-aware scanning
 }
 
 export const AutoBarcodeScanner: React.FC<AutoBarcodeScannerProps> = ({
   isOpen,
   onClose,
-  onScan
+  onScan,
+  scanMode = 'auto' // Default to auto mode for backward compatibility
 }) => {
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState('');
@@ -43,6 +45,18 @@ export const AutoBarcodeScanner: React.FC<AutoBarcodeScannerProps> = ({
       }
     };
   }, []);
+
+  // FIX: Context-aware barcode processing
+  const determineBarcodeType = (barcode: string): 'machine' | 'prize' | 'part' | 'unknown' => {
+    if (barcode.startsWith('MACHINE_') || barcode.startsWith('MAC')) {
+      return 'machine';
+    } else if (barcode.startsWith('PRIZE_')) {
+      return 'prize';
+    } else if (barcode.startsWith('PART_')) {
+      return 'part';
+    }
+    return 'unknown';
+  };
 
   const processFrame = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || !processorRef.current ||
@@ -100,30 +114,74 @@ export const AutoBarcodeScanner: React.FC<AutoBarcodeScannerProps> = ({
         setIsProcessing(true);
         setScanningActive(false);
 
+        // FIX: Context-aware barcode handling
+        const barcodeType = determineBarcodeType(result.text);
+        console.log('🔍 Detected barcode type:', barcodeType, 'Scan mode:', scanMode);
+
         try {
-          const machine = await findMachineByBarcode(result.text);
-          console.log('✅ Machine found:', machine.name);
+          if (scanMode === 'machine' || (scanMode === 'auto' && barcodeType === 'machine')) {
+            // Handle machine barcode
+            const machine = await findMachineByBarcode(result.text);
+            console.log('✅ Machine found:', machine.name);
 
-          toast({
-            title: 'Machine Found!',
-            description: `Found ${machine.name}. Machine selected.`,
-          });
+            toast({
+              title: 'Machine Found!',
+              description: `Found ${machine.name}. Machine selected.`,
+            });
 
-          // Stop scanning and close
-          stopScanning();
-          onClose();
+            // Stop scanning and close
+            stopScanning();
+            onClose();
 
-          // Call the onScan callback to select the machine
-          setTimeout(() => {
-            onScan(result.text);
-          }, 100);
+            // Call the onScan callback to select the machine
+            setTimeout(() => {
+              onScan(result.text);
+            }, 100);
 
-        } catch (machineError: any) {
-          console.error('❌ Machine lookup failed:', machineError);
+          } else if (scanMode === 'prize' || scanMode === 'part' || 
+                    (scanMode === 'auto' && (barcodeType === 'prize' || barcodeType === 'part'))) {
+            // Handle prize/part barcode - just pass it directly to the handler
+            console.log('✅ Prize/Part barcode detected:', result.text);
+
+            toast({
+              title: `${barcodeType.charAt(0).toUpperCase() + barcodeType.slice(1)} Barcode Detected!`,
+              description: `Found barcode: ${result.text}`,
+            });
+
+            // Stop scanning and close
+            stopScanning();
+            onClose();
+
+            // Call the onScan callback immediately
+            setTimeout(() => {
+              onScan(result.text);
+            }, 100);
+
+          } else {
+            // Unknown or mismatched barcode type
+            console.log('⚠️ Barcode type mismatch or unknown:', barcodeType, 'Expected:', scanMode);
+
+            toast({
+              title: 'Barcode Detected!',
+              description: `Found ${barcodeType} barcode: ${result.text}${scanMode !== 'auto' ? ` (Expected ${scanMode})` : ''}`,
+              variant: 'default'
+            });
+
+            // For unknown types or mismatches, still pass to handler and let it decide
+            stopScanning();
+            onClose();
+
+            setTimeout(() => {
+              onScan(result.text);
+            }, 100);
+          }
+
+        } catch (lookupError: any) {
+          console.error('❌ Barcode lookup failed:', lookupError);
 
           toast({
             title: 'Barcode Detected!',
-            description: `Found barcode: ${result.text} (Machine not in database)`,
+            description: `Found barcode: ${result.text} (Not found in database)`,
             variant: 'default'
           });
 
@@ -150,7 +208,7 @@ export const AutoBarcodeScanner: React.FC<AutoBarcodeScannerProps> = ({
     if (scanningActive) {
       animationFrameRef.current = requestAnimationFrame(processFrame);
     }
-  }, [isProcessing, scanningActive, cameraReady, findMachineByBarcode, onScan, onClose, toast, scanAttempts]);
+  }, [isProcessing, scanningActive, cameraReady, findMachineByBarcode, onScan, onClose, toast, scanAttempts, scanMode]);
 
   const startScanning = async () => {
     try {
@@ -314,16 +372,43 @@ export const AutoBarcodeScanner: React.FC<AutoBarcodeScannerProps> = ({
     onClose();
   };
 
+  // Get scan mode display text
+  const getScanModeText = () => {
+    switch (scanMode) {
+      case 'machine':
+        return 'Machine Barcode Scanner';
+      case 'prize':
+        return 'Prize Barcode Scanner';
+      case 'part':
+        return 'Part Barcode Scanner';
+      default:
+        return 'Auto Barcode Scanner';
+    }
+  };
+
+  const getScanModeDescription = () => {
+    switch (scanMode) {
+      case 'machine':
+        return 'Point your camera at a machine barcode to scan and select the machine';
+      case 'prize':
+        return 'Point your camera at a prize barcode to scan and select the prize';
+      case 'part':
+        return 'Point your camera at a part barcode to scan and select the part';
+      default:
+        return 'Point your camera at any barcode to scan (auto-detects type)';
+    }
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Target className="h-5 w-5" />
-            Auto Barcode Scanner
+            {getScanModeText()}
           </DialogTitle>
           <DialogDescription>
-            Point your camera at a barcode to scan and select the machine
+            {getScanModeDescription()}
           </DialogDescription>
         </DialogHeader>
 
@@ -361,6 +446,11 @@ export const AutoBarcodeScanner: React.FC<AutoBarcodeScannerProps> = ({
                   <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-white text-sm bg-black bg-opacity-50 px-2 py-1 rounded">
                     Point at barcode
                   </div>
+                  {scanMode !== 'auto' && (
+                    <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 text-white text-xs bg-black bg-opacity-50 px-2 py-1 rounded">
+                      Looking for: {scanMode}
+                    </div>
+                  )}
                 </div>
               )}
 

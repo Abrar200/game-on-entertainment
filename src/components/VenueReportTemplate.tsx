@@ -1,3 +1,4 @@
+// src/components/VenueReportTemplate.tsx - Fixed version
 import React from 'react';
 
 interface VenueReportTemplateProps {
@@ -31,20 +32,21 @@ interface VenueReportTemplateProps {
   companyLogo?: string;
 }
 
-const VenueReportTemplate: React.FC<VenueReportTemplateProps> = ({
+// Changed from React component to utility function
+export const VenueReportTemplate = ({
   venue,
   machines,
   reports,
   dateRange,
   companyLogo
-}) => {
+}: VenueReportTemplateProps) => {
   const totalRevenue = reports.reduce((sum, report) => sum + report.money_collected, 0);
   const venueCommission = totalRevenue * (venue.commission_percentage / 100);
   const commissionAmount = venueCommission;
   const totalTokens = reports.reduce((sum, report) => sum + report.tokens_in_game, 0);
   const allPaid = reports.every(report => report.paid_status);
 
-  const generateReportHTML = () => {
+  const generateHTML = () => {
     const machineRows = machines.map(machine => {
       const machineReports = reports.filter(r => r.machine_id === machine.id);
       const machineTurnover = machineReports.reduce((sum, r) => sum + r.money_collected, 0);
@@ -71,9 +73,13 @@ const VenueReportTemplate: React.FC<VenueReportTemplateProps> = ({
       `<img src="${companyLogo}" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />` :
       `<img src="/images/logo.jpg" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />`;
 
+    // Fixed venue image handling with proper URL processing
     const venueImageElement = venue.image_url ? 
       `<div style="text-align: center; margin: 20px 0;">
-        <img src="${venue.image_url}" alt="${venue.name}" style="max-width: 300px; max-height: 200px; object-fit: cover; border-radius: 8px; border: 2px solid #ddd;" />
+        <img src="${venue.image_url.startsWith('http') ? venue.image_url : `https://ogbxiolnyzidylzoljuh.supabase.co/storage/v1/object/public/images/${venue.image_url}`}" 
+             alt="${venue.name}" 
+             style="max-width: 300px; max-height: 200px; object-fit: cover; border-radius: 8px; border: 2px solid #ddd;" 
+             onerror="this.style.display='none'" />
       </div>` : '';
 
     return `
@@ -264,7 +270,7 @@ const VenueReportTemplate: React.FC<VenueReportTemplateProps> = ({
   };
 
   return {
-    generateHTML: generateReportHTML,
+    generateHTML,
     totalRevenue,
     venueCommission: commissionAmount,
     totalTokens

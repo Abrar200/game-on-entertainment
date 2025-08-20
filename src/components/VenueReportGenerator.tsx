@@ -8,7 +8,7 @@ import { useAppContext } from '@/contexts/AppContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { Calculator, ArrowLeft, FileText, Building2, DollarSign } from 'lucide-react';
-import VenueReportTemplate from '@/components/VenueReportTemplate';
+import { VenueReportTemplate } from '@/components/VenueReportTemplate'; // Updated import
 import { getImageUrl } from '@/lib/imageUtils';
 
 interface VenueReportGeneratorProps {
@@ -135,7 +135,7 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
         console.log('✅ Venue report saved to database:', savedReport);
       }
 
-      // Generate and display the report
+      // Generate and display the report - FIXED THIS PART
       const reportTemplate = VenueReportTemplate(reportSummary);
       const htmlContent = reportTemplate.generateHTML();
 

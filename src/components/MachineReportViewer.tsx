@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Download, Printer } from 'lucide-react';
+import { Download, Printer, Check, X } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
+import { supabase } from '@/lib/supabase';
+import { useToast } from '@/hooks/use-toast';
 
 interface MachineReport {
   id: string;
@@ -13,6 +15,7 @@ interface MachineReport {
   tokens_in_game: number;
   notes: string;
   report_date: string;
+  paid_status?: boolean;
   machines?: {
     name: string;
     type: string;
@@ -28,6 +31,36 @@ interface Props {
 
 const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
   const { companyLogo } = useAppContext();
+  const { toast } = useToast();
+  const [paidStatus, setPaidStatus] = useState(report.paid_status || false);
+  const [updating, setUpdating] = useState(false);
+  
+  const updatePaidStatus = async (newStatus: boolean) => {
+    setUpdating(true);
+    try {
+      const { error } = await supabase
+        .from('machine_reports')
+        .update({ paid_status: newStatus })
+        .eq('id', report.id);
+
+      if (error) throw error;
+
+      setPaidStatus(newStatus);
+      toast({
+        title: 'Success',
+        description: `Report marked as ${newStatus ? 'paid' : 'unpaid'}`,
+      });
+    } catch (error) {
+      console.error('Error updating paid status:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to update payment status',
+        variant: 'destructive',
+      });
+    } finally {
+      setUpdating(false);
+    }
+  };
   
   const downloadReport = () => {
     const htmlContent = generateReportHTML();
@@ -61,27 +94,12 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
     const tokensInMachine = report.tokens_in_game;
     const totalGameRevenue = totalCashPaywave;
     const venueCommissionPercent = venue?.commission_percentage || 30;
+    const venueCommissionAmount = totalGameRevenue * (venueCommissionPercent / 100);
     
-    // Use uploaded logo if available, otherwise use default
+    // Use Game On logo if available
     const logoElement = companyLogo ? 
       `<img src="${companyLogo}" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />` :
-      `<svg class="logo" viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg" style="width: 140px; height: 80px; margin-bottom: 5px;">
-        <defs>
-          <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#dc2626;stop-opacity:1" />
-            <stop offset="100%" style="stop-color:#991b1b;stop-opacity:1" />
-          </linearGradient>
-        </defs>
-        <rect width="200" height="100" fill="url(#bgGrad)" rx="12" stroke="#7f1d1d" stroke-width="2"/>
-        <circle cx="50" cy="50" r="25" fill="#ffffff" stroke="#dc2626" stroke-width="3"/>
-        <rect x="35" y="35" width="30" height="30" fill="#dc2626" rx="5"/>
-        <circle cx="50" cy="50" r="8" fill="#ffffff"/>
-        <text x="85" y="40" fill="#ffffff" font-family="Arial, sans-serif" font-size="16" font-weight="bold">GAME ON</text>
-        <text x="85" y="60" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">ENTERTAINMENT</text>
-        <circle cx="160" cy="25" r="6" fill="#fbbf24" opacity="0.8"/>
-        <circle cx="170" cy="35" r="4" fill="#f59e0b" opacity="0.8"/>
-        <circle cx="150" cy="40" r="3" fill="#d97706" opacity="0.8"/>
-      </svg>`;
+      `<img src="/images/logo.jpg" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />`;
     
     return `
       <!DOCTYPE html>
@@ -98,6 +116,7 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
             color: #000;
             background: #fff;
             font-size: 14px;
+            font-weight: bold;
           }
           .header { 
             position: relative;
@@ -123,11 +142,13 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
             color: #dc2626; 
             margin: 0 0 8px 0;
             font-size: 22px;
+            font-weight: bold;
           }
           .machine-info {
             margin: 15px 0;
             text-align: center;
             font-size: 13px;
+            font-weight: bold;
           }
           .metrics-list {
             background: #fff;
@@ -143,16 +164,17 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
             padding: 12px 0;
             border-bottom: 1px solid #000;
             font-size: 14px;
+            font-weight: bold;
           }
           .metric-item:last-child {
             border-bottom: none;
           }
           .metric-label {
-            font-weight: 600;
+            font-weight: bold;
             color: #000;
           }
           .metric-value {
-            font-weight: 700;
+            font-weight: bold;
             color: #dc2626;
             font-size: 16px;
           }
@@ -163,9 +185,31 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
             padding: 15px;
             margin: 20px 0;
             text-align: center;
-            font-weight: 600;
+            font-weight: bold;
             color: #000;
             font-size: 13px;
+          }
+          .token-notice {
+            background: #e0f2fe;
+            border: 2px solid #0288d1;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 15px 0;
+            text-align: center;
+            font-weight: bold;
+            color: #01579b;
+            font-size: 12px;
+          }
+          .payment-status {
+            background: ${paidStatus ? '#e8f5e8' : '#fff3cd'};
+            border: 2px solid ${paidStatus ? '#4caf50' : '#ffc107'};
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+            font-weight: bold;
+            color: ${paidStatus ? '#2e7d32' : '#f57c00'};
+            font-size: 14px;
           }
           .footer {
             margin-top: 25px;
@@ -174,6 +218,7 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
             color: #000;
             border-top: 1px solid #000;
             padding-top: 15px;
+            font-weight: bold;
           }
           @media print { 
             button { display: none !important; }
@@ -209,11 +254,6 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
           </div>
           
           <div class="metric-item">
-            <span class="metric-label">(Token sales commission is seen on the token machine report):</span>
-            <span class="metric-value"></span>
-          </div>
-          
-          <div class="metric-item">
             <span class="metric-label">Total Game Revenue:</span>
             <span class="metric-value">$${totalGameRevenue.toFixed(2)}</span>
           </div>
@@ -222,16 +262,29 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
             <span class="metric-label">Venue Commission %:</span>
             <span class="metric-value">${venueCommissionPercent}%</span>
           </div>
+          
+          <div class="metric-item">
+            <span class="metric-label">Venue Commission Amount:</span>
+            <span class="metric-value">$${venueCommissionAmount.toFixed(2)}</span>
+          </div>
+        </div>
+        
+        <div class="token-notice">
+          <strong>Note:</strong> Commission on the "tokens in game" is paid via the token machine commission
         </div>
         
         <div class="commission-notice">
           <strong>Your commission will be paid into your nominated bank account within 3 business days</strong>
         </div>
         
+        <div class="payment-status">
+          <strong>Payment Status: ${paidStatus ? 'PAID ✓' : 'PENDING PAYMENT'}</strong>
+        </div>
+        
         ${report.notes ? `
-        <div style="background: #f8f8f8; padding: 15px; border: 1px solid #000; border-radius: 6px; margin: 15px 0; font-size: 13px;">
-          <h3 style="margin-top: 0; color: #000; font-size: 14px;">📝 Notes</h3>
-          <p style="margin: 0; color: #000;">${report.notes}</p>
+        <div style="background: #f8f8f8; padding: 15px; border: 1px solid #000; border-radius: 6px; margin: 15px 0; font-size: 13px; font-weight: bold;">
+          <h3 style="margin-top: 0; color: #000; font-size: 14px; font-weight: bold;">Notes</h3>
+          <p style="margin: 0; color: #000; font-weight: bold;">${report.notes}</p>
         </div>
         ` : ''}
         
@@ -241,8 +294,8 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
         </div>
         
         <div class="no-print" style="text-align: center; margin-top: 20px;">
-          <button onclick="window.print()" style="padding: 10px 20px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 10px;">🖨️ Print Report</button>
-          <button onclick="window.close()" style="padding: 10px 20px; background: #000; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">✖️ Close</button>
+          <button onclick="window.print()" style="padding: 10px 20px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 10px;">Print Report</button>
+          <button onclick="window.close()" style="padding: 10px 20px; background: #000; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">Close</button>
         </div>
       </body>
       </html>
@@ -250,7 +303,7 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
   };
 
   return (
-    <div className="flex gap-2">
+    <div className="flex gap-2 items-center">
       <Button 
         size="sm" 
         variant="outline"
@@ -268,6 +321,20 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
       >
         <Printer className="h-3 w-3" />
         Print
+      </Button>
+      <Button
+        size="sm"
+        variant={paidStatus ? "default" : "outline"}
+        onClick={() => updatePaidStatus(!paidStatus)}
+        disabled={updating}
+        className={`flex items-center gap-1 ${
+          paidStatus 
+            ? 'bg-green-600 hover:bg-green-700 text-white' 
+            : 'border-orange-400 text-orange-600 hover:bg-orange-50'
+        }`}
+      >
+        {paidStatus ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+        {updating ? 'Updating...' : (paidStatus ? 'Paid' : 'Mark Paid')}
       </Button>
     </div>
   );

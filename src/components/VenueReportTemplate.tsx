@@ -6,6 +6,7 @@ interface VenueReportTemplateProps {
     name: string;
     address?: string;
     commission_percentage: number;
+    image_url?: string;
   };
   machines: Array<{
     id: string;
@@ -21,6 +22,7 @@ interface VenueReportTemplateProps {
     toys_dispensed: number;
     tokens_in_game: number;
     notes?: string;
+    paid_status?: boolean;
   }>;
   dateRange: {
     start: string;
@@ -40,6 +42,7 @@ const VenueReportTemplate: React.FC<VenueReportTemplateProps> = ({
   const venueCommission = totalRevenue * (venue.commission_percentage / 100);
   const commissionAmount = venueCommission;
   const totalTokens = reports.reduce((sum, report) => sum + report.tokens_in_game, 0);
+  const allPaid = reports.every(report => report.paid_status);
 
   const generateReportHTML = () => {
     const machineRows = machines.map(machine => {
@@ -47,38 +50,31 @@ const VenueReportTemplate: React.FC<VenueReportTemplateProps> = ({
       const machineTurnover = machineReports.reduce((sum, r) => sum + r.money_collected, 0);
       const machineTokens = machineReports.reduce((sum, r) => sum + r.tokens_in_game, 0);
       const machineCommission = machineTurnover * (venue.commission_percentage / 100);
+      const machinePaid = machineReports.every(r => r.paid_status);
       
       return `
         <tr>
-          <td>${machine.name}</td>
-          <td>${machine.serial_number || 'N/A'}</td>
-          <td>$${machineTurnover.toFixed(2)}</td>
-          <td>${machineTokens}</td>
-          <td>$${machineCommission.toFixed(2)}</td>
+          <td style="font-weight: bold;">${machine.name}</td>
+          <td style="font-weight: bold;">${machine.serial_number || 'N/A'}</td>
+          <td style="font-weight: bold;">$${machineTurnover.toFixed(2)}</td>
+          <td style="font-weight: bold;">${machineTokens}</td>
+          <td style="font-weight: bold;">$${machineCommission.toFixed(2)}</td>
+          <td style="font-weight: bold; color: ${machinePaid ? '#28a745' : '#ffc107'};">
+            ${machinePaid ? 'PAID ✓' : 'PENDING'}
+          </td>
         </tr>
       `;
     }).join('');
 
-    // Use uploaded logo if available, otherwise use default
+    // Use Game On logo if available
     const logoElement = companyLogo ? 
       `<img src="${companyLogo}" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />` :
-      `<svg class="logo" viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg" style="width: 140px; height: 80px; margin-bottom: 5px;">
-        <defs>
-          <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#dc2626;stop-opacity:1" />
-            <stop offset="100%" style="stop-color:#991b1b;stop-opacity:1" />
-          </linearGradient>
-        </defs>
-        <rect width="200" height="100" fill="url(#bgGrad)" rx="12" stroke="#7f1d1d" stroke-width="2"/>
-        <circle cx="50" cy="50" r="25" fill="#ffffff" stroke="#dc2626" stroke-width="3"/>
-        <rect x="35" y="35" width="30" height="30" fill="#dc2626" rx="5"/>
-        <circle cx="50" cy="50" r="8" fill="#ffffff"/>
-        <text x="85" y="40" fill="#ffffff" font-family="Arial, sans-serif" font-size="16" font-weight="bold">GAME ON</text>
-        <text x="85" y="60" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">ENTERTAINMENT</text>
-        <circle cx="160" cy="25" r="6" fill="#fbbf24" opacity="0.8"/>
-        <circle cx="170" cy="35" r="4" fill="#f59e0b" opacity="0.8"/>
-        <circle cx="150" cy="40" r="3" fill="#d97706" opacity="0.8"/>
-      </svg>`;
+      `<img src="/images/logo.jpg" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />`;
+
+    const venueImageElement = venue.image_url ? 
+      `<div style="text-align: center; margin: 20px 0;">
+        <img src="${venue.image_url}" alt="${venue.name}" style="max-width: 300px; max-height: 200px; object-fit: cover; border-radius: 8px; border: 2px solid #ddd;" />
+      </div>` : '';
 
     return `
       <!DOCTYPE html>
@@ -87,32 +83,88 @@ const VenueReportTemplate: React.FC<VenueReportTemplateProps> = ({
         <title>Commission Report - ${venue.name}</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: white; padding: 20px; }
+          body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: white; 
+            padding: 20px; 
+            font-weight: bold;
+          }
           .container { max-width: 1000px; margin: 0 auto; background: white; border: 1px solid #ddd; }
           .header { background: #2c3e50; color: white; padding: 30px; text-align: center; position: relative; }
           .company-branding { position: absolute; top: 20px; right: 30px; text-align: right; }
           .company-name { font-size: 14px; font-weight: bold; color: white; margin: 0; }
-          .title { font-size: 2em; margin-bottom: 10px; }
-          .subtitle { font-size: 1.2em; opacity: 0.9; }
+          .title { font-size: 2em; margin-bottom: 10px; font-weight: bold; }
+          .subtitle { font-size: 1.2em; opacity: 0.9; font-weight: bold; }
           .content { padding: 30px; }
           .info-section { margin-bottom: 30px; }
           .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
           .info-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea; }
-          .info-card h3 { color: #2c3e50; margin-bottom: 15px; }
-          .info-card p { margin-bottom: 8px; }
+          .info-card h3 { color: #2c3e50; margin-bottom: 15px; font-weight: bold; }
+          .info-card p { margin-bottom: 8px; font-weight: bold; }
           .summary-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin: 30px 0; }
           .stat-card { background: #667eea; color: white; padding: 20px; border-radius: 8px; text-align: center; }
           .stat-value { font-size: 1.8em; font-weight: bold; margin-bottom: 5px; }
-          .stat-label { font-size: 0.9em; opacity: 0.9; }
-          .commission-highlight { background: #28a745; color: white; padding: 25px; border-radius: 8px; text-align: center; margin: 30px 0; }
-          .commission-highlight h3 { font-size: 1.4em; margin-bottom: 10px; }
-          .commission-highlight p { font-size: 1.1em; }
+          .stat-label { font-size: 0.9em; opacity: 0.9; font-weight: bold; }
+          .commission-highlight { 
+            background: #28a745; 
+            color: white; 
+            padding: 25px; 
+            border-radius: 8px; 
+            text-align: center; 
+            margin: 30px 0; 
+            font-weight: bold;
+          }
+          .commission-highlight h3 { font-size: 1.4em; margin-bottom: 10px; font-weight: bold; }
+          .commission-highlight p { font-size: 1.1em; font-weight: bold; }
+          .token-notice {
+            background: #e0f2fe;
+            border: 2px solid #0288d1;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+            font-weight: bold;
+            color: #01579b;
+            font-size: 14px;
+          }
+          .payment-status {
+            background: ${allPaid ? '#e8f5e8' : '#fff3cd'};
+            border: 2px solid ${allPaid ? '#4caf50' : '#ffc107'};
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: center;
+            font-weight: bold;
+            color: ${allPaid ? '#2e7d32' : '#f57c00'};
+            font-size: 16px;
+          }
           .machine-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-          .machine-table th { background: #495057; color: white; padding: 15px; text-align: left; }
-          .machine-table td { padding: 12px; border-bottom: 1px solid #e9ecef; }
+          .machine-table th { 
+            background: #495057; 
+            color: white; 
+            padding: 15px; 
+            text-align: left; 
+            font-weight: bold;
+          }
+          .machine-table td { 
+            padding: 12px; 
+            border-bottom: 1px solid #e9ecef; 
+            font-weight: bold;
+          }
           .machine-table tr:hover { background: #f8f9fa; }
-          .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; border-top: 1px solid #e9ecef; }
-          @media print { body { background: white; } }
+          .footer { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            text-align: center; 
+            color: #6c757d; 
+            border-top: 1px solid #e9ecef;
+            font-weight: bold;
+          }
+          .page-break { page-break-before: always; }
+          @media print { 
+            body { background: white; } 
+            .page-break { page-break-before: always; }
+          }
         </style>
       </head>
       <body>
@@ -127,12 +179,15 @@ const VenueReportTemplate: React.FC<VenueReportTemplateProps> = ({
           </div>
           
           <div class="content">
+            ${venueImageElement}
+            
             <div class="info-grid">
               <div class="info-card">
                 <h3>Venue Information</h3>
                 <p><strong>Name:</strong> ${venue.name}</p>
                 ${venue.address ? `<p><strong>Address:</strong> ${venue.address}</p>` : ''}
                 <p><strong>Commission Rate:</strong> ${venue.commission_percentage}%</p>
+                <p><strong>Commission Amount:</strong> $${commissionAmount.toFixed(2)}</p>
               </div>
               <div class="info-card">
                 <h3>Report Period</h3>
@@ -161,27 +216,40 @@ const VenueReportTemplate: React.FC<VenueReportTemplateProps> = ({
               </div>
             </div>
             
+            <div class="token-notice">
+              <strong>Note:</strong> Commission on the "tokens in game" is paid via the token machine commission
+            </div>
+            
             <div class="commission-highlight">
-              <h3>💰 Commission Payment Due</h3>
+              <h3>Commission Payment Due</h3>
               <p>Total Commission Amount: <strong>$${commissionAmount.toFixed(2)}</strong></p>
               <p>Payment will be processed within 7 business days</p>
             </div>
             
-            <h3 style="color: #2c3e50; margin-bottom: 15px;">Machine Performance Breakdown</h3>
-            <table class="machine-table">
-              <thead>
-                <tr>
-                  <th>Machine Name</th>
-                  <th>Serial Number</th>
-                  <th>Machine Turnover</th>
-                  <th>Tokens in Machine</th>
-                  <th>Commission Earned</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${machineRows}
-              </tbody>
-            </table>
+            <div class="payment-status">
+              <strong>Payment Status: ${allPaid ? 'ALL COMMISSIONS PAID ✓' : 'PENDING PAYMENTS'}</strong>
+            </div>
+          </div>
+          
+          <div class="page-break">
+            <div class="content">
+              <h3 style="color: #2c3e50; margin-bottom: 15px; font-weight: bold;">Machine Performance Breakdown</h3>
+              <table class="machine-table">
+                <thead>
+                  <tr>
+                    <th>Machine Name</th>
+                    <th>Serial Number</th>
+                    <th>Machine Turnover</th>
+                    <th>Tokens in Machine</th>
+                    <th>Commission Earned</th>
+                    <th>Payment Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${machineRows}
+                </tbody>
+              </table>
+            </div>
           </div>
           
           <div class="footer">

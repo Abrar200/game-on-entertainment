@@ -5,10 +5,11 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAppContext } from '@/contexts/AppContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { Building2, FileText, Home, QrCode, Search, Calendar, Filter } from 'lucide-react';
+import { Building2, FileText, Home, QrCode, Search, Calendar, Filter, RefreshCw } from 'lucide-react';
 import MachineReportViewer from './MachineReportViewer';
 
 interface MachineReport {
@@ -35,17 +36,37 @@ interface MachineReport {
   machine_serial?: string;
 }
 
+interface VenueReport {
+  id: string;
+  venue_id: string;
+  venue_name: string;
+  venue_address?: string;
+  total_revenue: number;
+  venue_commission_percentage: number;
+  venue_commission_amount: number;
+  total_machines: number;
+  total_reports: number;
+  date_range_start: string;
+  date_range_end: string;
+  report_date: string;
+  paid_status?: boolean;
+  machine_data?: any;
+}
+
 const ReportsContent: React.FC = () => {
   const { venues = [], machines = [], refreshData } = useAppContext();
   const navigate = useNavigate();
   const [machineReports, setMachineReports] = useState<MachineReport[]>([]);
-  const [filteredReports, setFilteredReports] = useState<MachineReport[]>([]);
+  const [venueReports, setVenueReports] = useState<VenueReport[]>([]);
+  const [filteredMachineReports, setFilteredMachineReports] = useState<MachineReport[]>([]);
+  const [filteredVenueReports, setFilteredVenueReports] = useState<VenueReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedVenue, setSelectedVenue] = useState<string>('all');
   const [selectedMachine, setSelectedMachine] = useState<string>('all');
   const [paymentFilter, setPaymentFilter] = useState<string>('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [activeTab, setActiveTab] = useState('machine-reports');
 
   const handleBackToDashboard = () => {
     navigate('/');
@@ -55,10 +76,11 @@ const ReportsContent: React.FC = () => {
     navigate('/barcode-scanner');
   };
 
-  const fetchMachineReports = async () => {
+  const fetchAllReports = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      // Fetch machine reports
+      const { data: machineData, error: machineError } = await supabase
         .from('machine_reports')
         .select(`
           *,
@@ -66,15 +88,15 @@ const ReportsContent: React.FC = () => {
         `)
         .order('report_date', { ascending: false });
 
-      if (error) {
-        console.error('Supabase error:', error);
-        throw error;
+      if (machineError) {
+        console.error('Machine reports error:', machineError);
+        throw machineError;
       }
       
-      console.log('Fetched reports:', data);
+      console.log('Fetched machine reports:', machineData?.length || 0);
       
-      // Enhance reports with machine data even for deleted machines
-      const enhancedReports = data?.map(report => {
+      // Enhance machine reports with machine data even for deleted machines
+      const enhancedMachineReports = machineData?.map(report => {
         const machine = report.machines;
         
         return {
@@ -87,22 +109,37 @@ const ReportsContent: React.FC = () => {
         };
       }) || [];
       
-      setMachineReports(enhancedReports);
-      setFilteredReports(enhancedReports);
+      setMachineReports(enhancedMachineReports);
+
+      // Fetch venue reports
+      const { data: venueData, error: venueError } = await supabase
+        .from('venue_reports')
+        .select('*')
+        .order('report_date', { ascending: false });
+
+      if (venueError) {
+        console.warn('Venue reports error (table may not exist):', venueError);
+        setVenueReports([]);
+      } else {
+        console.log('Fetched venue reports:', venueData?.length || 0);
+        setVenueReports(venueData || []);
+      }
+      
     } catch (error) {
-      console.error('Error fetching machine reports:', error);
+      console.error('Error fetching reports:', error);
     } finally {
       setLoading(false);
     }
   };
 
   const filterReports = () => {
-    let filtered = machineReports;
+    // Filter machine reports
+    let filteredMachine = machineReports;
 
     // Search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(report => {
+      filteredMachine = filteredMachine.filter(report => {
         const machineName = report.machine_name?.toLowerCase() || '';
         const machineType = report.machine_type?.toLowerCase() || '';
         const machineSerial = report.machine_serial?.toLowerCase() || '';
@@ -118,23 +155,23 @@ const ReportsContent: React.FC = () => {
 
     // Venue filter
     if (selectedVenue !== 'all') {
-      filtered = filtered.filter(report => report.venue_id === selectedVenue);
+      filteredMachine = filteredMachine.filter(report => report.venue_id === selectedVenue);
     }
 
     // Machine filter
     if (selectedMachine !== 'all') {
-      filtered = filtered.filter(report => report.machine_id === selectedMachine);
+      filteredMachine = filteredMachine.filter(report => report.machine_id === selectedMachine);
     }
 
     // Payment status filter
     if (paymentFilter !== 'all') {
       const isPaid = paymentFilter === 'paid';
-      filtered = filtered.filter(report => Boolean(report.paid_status) === isPaid);
+      filteredMachine = filteredMachine.filter(report => Boolean(report.paid_status) === isPaid);
     }
 
     // Date range filter
     if (dateRange.start && dateRange.end) {
-      filtered = filtered.filter(report => {
+      filteredMachine = filteredMachine.filter(report => {
         const reportDate = new Date(report.report_date);
         const startDate = new Date(dateRange.start);
         const endDate = new Date(dateRange.end);
@@ -142,24 +179,55 @@ const ReportsContent: React.FC = () => {
       });
     }
 
-    setFilteredReports(filtered);
+    setFilteredMachineReports(filteredMachine);
+
+    // Filter venue reports
+    let filteredVenue = venueReports;
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filteredVenue = filteredVenue.filter(report => 
+        report.venue_name?.toLowerCase().includes(query) ||
+        report.venue_address?.toLowerCase().includes(query)
+      );
+    }
+
+    if (selectedVenue !== 'all') {
+      filteredVenue = filteredVenue.filter(report => report.venue_id === selectedVenue);
+    }
+
+    if (paymentFilter !== 'all') {
+      const isPaid = paymentFilter === 'paid';
+      filteredVenue = filteredVenue.filter(report => Boolean(report.paid_status) === isPaid);
+    }
+
+    if (dateRange.start && dateRange.end) {
+      filteredVenue = filteredVenue.filter(report => {
+        const reportDate = new Date(report.report_date);
+        const startDate = new Date(dateRange.start);
+        const endDate = new Date(dateRange.end);
+        return reportDate >= startDate && reportDate <= endDate;
+      });
+    }
+
+    setFilteredVenueReports(filteredVenue);
   };
 
   useEffect(() => {
-    fetchMachineReports();
+    fetchAllReports();
   }, []);
 
   useEffect(() => {
     if (venues.length > 0 || machines.length > 0) {
-      fetchMachineReports();
+      fetchAllReports();
     }
   }, [venues, machines]);
 
   useEffect(() => {
     filterReports();
-  }, [searchQuery, selectedVenue, selectedMachine, paymentFilter, dateRange, machineReports, venues]);
+  }, [searchQuery, selectedVenue, selectedMachine, paymentFilter, dateRange, machineReports, venueReports, venues]);
 
-  const reportsByVenue = filteredReports.reduce((acc, report) => {
+  const machineReportsByVenue = filteredMachineReports.reduce((acc, report) => {
     const venue = venues.find(v => v.id === report.venue_id);
     const venueName = venue?.name || 'Unknown/Deleted Venue';
     
@@ -182,9 +250,13 @@ const ReportsContent: React.FC = () => {
     setDateRange({ start: '', end: '' });
   };
 
-  const totalReports = filteredReports.length;
-  const paidReports = filteredReports.filter(r => r.paid_status).length;
-  const totalRevenue = filteredReports.reduce((sum, r) => sum + r.money_collected, 0);
+  // Calculate stats for active tab
+  const activeReports = activeTab === 'machine-reports' ? filteredMachineReports : filteredVenueReports;
+  const totalReports = activeReports.length;
+  const paidReports = activeReports.filter((r: any) => r.paid_status).length;
+  const totalRevenue = activeTab === 'machine-reports' 
+    ? filteredMachineReports.reduce((sum, r) => sum + r.money_collected, 0)
+    : filteredVenueReports.reduce((sum, r) => sum + r.total_revenue, 0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
@@ -201,16 +273,27 @@ const ReportsContent: React.FC = () => {
             </Button>
             <div className="flex items-center gap-2">
               <FileText className="h-8 w-8 text-blue-600" />
-              <h1 className="text-3xl font-bold">Machine Reports</h1>
+              <h1 className="text-3xl font-bold">All Reports</h1>
             </div>
           </div>
-          <Button 
-            onClick={handleScanBarcode}
-            className="flex items-center gap-2 bg-green-600 text-white hover:bg-green-700"
-          >
-            <QrCode className="h-4 w-4" />
-            Scan Barcode
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={fetchAllReports}
+              disabled={loading}
+              variant="outline"
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+            <Button 
+              onClick={handleScanBarcode}
+              className="flex items-center gap-2 bg-green-600 text-white hover:bg-green-700"
+            >
+              <QrCode className="h-4 w-4" />
+              Scan Barcode
+            </Button>
+          </div>
         </div>
 
         {/* Summary Stats */}
@@ -324,117 +407,199 @@ const ReportsContent: React.FC = () => {
             </div>
           </CardContent>
         </Card>
-        
-        {loading ? (
-          <Card>
-            <CardContent className="text-center py-8">
-              <p>Loading reports...</p>
-            </CardContent>
-          </Card>
-        ) : filteredReports.length === 0 ? (
-          <Card>
-            <CardContent className="text-center py-8">
-              <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <h3 className="text-lg font-semibold mb-2">
-                {searchQuery || selectedVenue !== 'all' || selectedMachine !== 'all' || paymentFilter !== 'all' || dateRange.start || dateRange.end ? 'No Reports Found' : 'No Reports Generated'}
-              </h3>
-              <p className="text-gray-600">
-                {searchQuery || selectedVenue !== 'all' || selectedMachine !== 'all' || paymentFilter !== 'all' || dateRange.start || dateRange.end
-                  ? 'Try adjusting your search terms or filters' 
-                  : 'Generate reports from the Machine Reports section'
-                }
-              </p>
-              {(searchQuery || selectedVenue !== 'all' || selectedMachine !== 'all' || paymentFilter !== 'all' || dateRange.start || dateRange.end) && (
-                <Button onClick={clearFilters} className="mt-4">
-                  Clear All Filters
-                </Button>
-              )}
-            </CardContent>
-          </Card>
-        ) : (
-          <ScrollArea className="h-[70vh]">
-            <div className="space-y-4 pr-4">
-              {Object.entries(reportsByVenue).map(([venueName, reports]) => {
-                const venue = venues.find(v => v.name === venueName);
-                const venueReports = reports.length;
-                const venuePaidReports = reports.filter(r => r.paid_status).length;
-                const venueRevenue = reports.reduce((sum, r) => sum + r.money_collected, 0);
-                
-                return (
-                  <Card key={venueName} className="shadow-sm">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="flex items-center gap-2 text-lg">
-                          <Building2 className="h-4 w-4" />
-                          {venueName}
-                          <Badge variant="outline" className="ml-2">
-                            {venueReports} reports
-                          </Badge>
-                        </CardTitle>
-                        <div className="flex gap-2">
-                          <Badge variant={venuePaidReports === venueReports ? 'default' : 'secondary'}>
-                            {venuePaidReports}/{venueReports} Paid
-                          </Badge>
-                          <Badge variant="outline">
-                            ${venueRevenue.toFixed(2)}
-                          </Badge>
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <ScrollArea className="h-48">
-                        <div className="space-y-3 pr-2">
-                          {reports.map(report => {
-                            return (
-                              <div key={report.id} className="border rounded-lg p-3 hover:bg-gray-50 transition-colors">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex-1 min-w-0">
-                                    <h3 className="font-medium text-sm truncate">
-                                      {report.machine_name}
-                                      {!report.machines && (
-                                        <Badge variant="destructive" className="ml-2 text-xs">
-                                          Deleted
-                                        </Badge>
+
+        {/* Reports Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="machine-reports">Machine Reports ({machineReports.length})</TabsTrigger>
+            <TabsTrigger value="venue-reports">Venue Reports ({venueReports.length})</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="machine-reports">
+            {loading ? (
+              <Card>
+                <CardContent className="text-center py-8">
+                  <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
+                  <p>Loading machine reports...</p>
+                </CardContent>
+              </Card>
+            ) : filteredMachineReports.length === 0 ? (
+              <Card>
+                <CardContent className="text-center py-8">
+                  <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                  <h3 className="text-lg font-semibold mb-2">
+                    {searchQuery || selectedVenue !== 'all' || selectedMachine !== 'all' || paymentFilter !== 'all' || dateRange.start || dateRange.end ? 'No Machine Reports Found' : 'No Machine Reports Generated'}
+                  </h3>
+                  <p className="text-gray-600">
+                    {searchQuery || selectedVenue !== 'all' || selectedMachine !== 'all' || paymentFilter !== 'all' || dateRange.start || dateRange.end
+                      ? 'Try adjusting your search terms or filters' 
+                      : 'Generate reports from the Machine Reports section'
+                    }
+                  </p>
+                  {(searchQuery || selectedVenue !== 'all' || selectedMachine !== 'all' || paymentFilter !== 'all' || dateRange.start || dateRange.end) && (
+                    <Button onClick={clearFilters} className="mt-4">
+                      Clear All Filters
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            ) : (
+              <ScrollArea className="h-[70vh]">
+                <div className="space-y-4 pr-4">
+                  {Object.entries(machineReportsByVenue).map(([venueName, reports]) => {
+                    const venue = venues.find(v => v.name === venueName);
+                    const venueReports = reports.length;
+                    const venuePaidReports = reports.filter(r => r.paid_status).length;
+                    const venueRevenue = reports.reduce((sum, r) => sum + r.money_collected, 0);
+                    
+                    return (
+                      <Card key={venueName} className="shadow-sm">
+                        <CardHeader className="pb-3">
+                          <div className="flex items-center justify-between">
+                            <CardTitle className="flex items-center gap-2 text-lg">
+                              <Building2 className="h-4 w-4" />
+                              {venueName}
+                              <Badge variant="outline" className="ml-2">
+                                {venueReports} reports
+                              </Badge>
+                            </CardTitle>
+                            <div className="flex gap-2">
+                              <Badge variant={venuePaidReports === venueReports ? 'default' : 'secondary'}>
+                                {venuePaidReports}/{venueReports} Paid
+                              </Badge>
+                              <Badge variant="outline">
+                                ${venueRevenue.toFixed(2)}
+                              </Badge>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <ScrollArea className="h-48">
+                            <div className="space-y-3 pr-2">
+                              {reports.map(report => (
+                                <div key={report.id} className="border rounded-lg p-3 hover:bg-gray-50 transition-colors">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex-1 min-w-0">
+                                      <h3 className="font-medium text-sm truncate">
+                                        {report.machine_name}
+                                        {!report.machines && (
+                                          <Badge variant="destructive" className="ml-2 text-xs">
+                                            Deleted
+                                          </Badge>
+                                        )}
+                                      </h3>
+                                      <p className="text-xs text-gray-500 truncate">{report.machine_type}</p>
+                                      {report.machine_serial && report.machine_serial !== 'N/A' && (
+                                        <p className="text-xs text-gray-400">SN: {report.machine_serial}</p>
                                       )}
-                                    </h3>
-                                    <p className="text-xs text-gray-500 truncate">{report.machine_type}</p>
-                                    {report.machine_serial && report.machine_serial !== 'N/A' && (
-                                      <p className="text-xs text-gray-400">SN: {report.machine_serial}</p>
-                                    )}
-                                    <p className="text-xs text-gray-400">
-                                      {new Date(report.report_date).toLocaleDateString()}
-                                    </p>
-                                    <div className="mt-1 flex items-center gap-3 text-xs">
-                                      <span className="text-green-600 font-medium">
-                                        ${report.money_collected.toFixed(2)}
-                                      </span>
-                                      <span className="text-orange-600">
-                                        {report.tokens_in_game || 0} tokens
-                                      </span>
-                                      <Badge 
-                                        variant={report.paid_status ? 'default' : 'secondary'}
-                                        className="text-xs"
-                                      >
-                                        {report.paid_status ? 'Paid' : 'Pending'}
-                                      </Badge>
+                                      <p className="text-xs text-gray-400">
+                                        {new Date(report.report_date).toLocaleDateString()}
+                                      </p>
+                                      <div className="mt-1 flex items-center gap-3 text-xs">
+                                        <span className="text-green-600 font-medium">
+                                          ${report.money_collected.toFixed(2)}
+                                        </span>
+                                        <span className="text-orange-600">
+                                          {report.tokens_in_game || 0} tokens
+                                        </span>
+                                        <Badge 
+                                          variant={report.paid_status ? 'default' : 'secondary'}
+                                          className="text-xs"
+                                        >
+                                          {report.paid_status ? 'Paid' : 'Pending'}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                    <div className="ml-2">
+                                      <MachineReportViewer report={report} venue={venue} />
                                     </div>
                                   </div>
-                                  <div className="ml-2">
-                                    <MachineReportViewer report={report} venue={venue} />
-                                  </div>
                                 </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </ScrollArea>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          </ScrollArea>
-        )}
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            )}
+          </TabsContent>
+
+          <TabsContent value="venue-reports">
+            {loading ? (
+              <Card>
+                <CardContent className="text-center py-8">
+                  <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
+                  <p>Loading venue reports...</p>
+                </CardContent>
+              </Card>
+            ) : filteredVenueReports.length === 0 ? (
+              <Card>
+                <CardContent className="text-center py-8">
+                  <Building2 className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                  <h3 className="text-lg font-semibold mb-2">No Venue Reports Found</h3>
+                  <p className="text-gray-600">Generate venue reports from the Reports section</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <ScrollArea className="h-[70vh]">
+                <div className="space-y-4 pr-4">
+                  {filteredVenueReports.map(report => {
+                    const venue = venues.find(v => v.id === report.venue_id);
+                    return (
+                      <Card key={report.id} className="shadow-sm">
+                        <CardHeader className="pb-3">
+                          <div className="flex items-center justify-between">
+                            <CardTitle className="flex items-center gap-2 text-lg">
+                              <Building2 className="h-4 w-4" />
+                              {report.venue_name}
+                              <Badge variant="outline" className="ml-2">
+                                {new Date(report.date_range_start).toLocaleDateString()} - {new Date(report.date_range_end).toLocaleDateString()}
+                              </Badge>
+                            </CardTitle>
+                            <div className="flex gap-2">
+                              <Badge variant={report.paid_status ? 'default' : 'secondary'}>
+                                {report.paid_status ? 'Paid' : 'Pending'}
+                              </Badge>
+                              <Badge variant="outline">
+                                ${report.total_revenue.toFixed(2)}
+                              </Badge>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                            <div>
+                              <span className="text-gray-500">Total Revenue:</span>
+                              <div className="font-semibold text-green-600">${report.total_revenue.toFixed(2)}</div>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Commission ({report.venue_commission_percentage}%):</span>
+                              <div className="font-semibold text-blue-600">${report.venue_commission_amount.toFixed(2)}</div>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Machines:</span>
+                              <div className="font-semibold">{report.total_machines}</div>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Report Date:</span>
+                              <div className="font-semibold">{new Date(report.report_date).toLocaleDateString()}</div>
+                            </div>
+                          </div>
+                          {report.venue_address && (
+                            <p className="text-xs text-gray-500 mt-2">{report.venue_address}</p>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

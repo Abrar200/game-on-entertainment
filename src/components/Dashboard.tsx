@@ -10,6 +10,13 @@ import { useToast } from '@/hooks/use-toast';
 
 interface DashboardProps {
   onNavigate?: (view: string) => void;
+  userProfile?: {
+    role: string;
+    username?: string;
+    full_name?: string;
+    email: string;
+  };
+  hasPermission?: (permission: string) => boolean;
 }
 
 interface BusinessHealth {
@@ -30,7 +37,7 @@ interface DashboardStats {
   loading: boolean;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermission }) => {
   const { venues, machines, prizes, parts, setCurrentView } = useAppContext();
   const { toast } = useToast();
   const [businessHealth, setBusinessHealth] = useState<BusinessHealth>({
@@ -53,6 +60,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   useEffect(() => {
     fetchDashboardData();
   }, [machines, prizes, parts]);
+
+  // Listen for machine problems updates
+  useEffect(() => {
+    const handleMachineProblemsUpdate = () => {
+      console.log('🔄 Machine problems updated, recalculating business health...');
+      // Delay to allow database updates to complete
+      setTimeout(() => {
+        fetchDashboardData();
+      }, 1000);
+    };
+
+    window.addEventListener('machineProblemsUpdated', handleMachineProblemsUpdate);
+    
+    return () => {
+      window.removeEventListener('machineProblemsUpdated', handleMachineProblemsUpdate);
+    };
+  }, []);
 
   const fetchDashboardData = async () => {
     try {
@@ -148,14 +172,42 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     const issues: string[] = [];
     const improvements: string[] = [];
 
-    // Get count of active (non-dismissed) machine problem alerts
+    // Get count of active (non-dismissed) machine problem alerts with enhanced checking
     let activeMachineProblems = 0;
     try {
-      // Try to get dismissed alerts from database
-      const { data: dismissedAlerts, error } = await supabase
-        .from('machine_problems')
-        .select('machine_id, problem_type')
-        .not('dismissed_at', 'is', null);
+      // Get dismissed alerts from multiple sources
+      const dismissedAlertsPromises = [
+        supabase.from('machine_problems').select('machine_id, problem_type').not('dismissed_at', 'is', null),
+        Promise.resolve({ data: [] }) // Fallback for localStorage
+      ];
+
+      // Add localStorage fallback
+      try {
+        const localDismissed = localStorage.getItem('dismissedMachineAlerts');
+        if (localDismissed) {
+          const dismissedList = JSON.parse(localDismissed);
+          dismissedAlertsPromises[1] = Promise.resolve({ 
+            data: dismissedList.map((key: string) => {
+              const [machine_id, problem_type] = key.split('_');
+              return { machine_id, problem_type };
+            })
+          });
+        }
+      } catch (e) {
+        // Ignore localStorage errors
+      }
+
+      const [dbResult, localResult] = await Promise.all(dismissedAlertsPromises);
+      
+      // Combine dismissed alerts from both sources
+      const allDismissedAlerts = [
+        ...(dbResult.data || []),
+        ...(localResult.data || [])
+      ];
+
+      const { data, error } = await supabase
+        .from('alerts')
+        .select();
 
       if (error && error.code !== 'PGRST116') {
         console.warn('Could not load dismissed alerts:', error);
@@ -164,6 +216,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       // Count machine problems (high parts usage) that aren't dismissed
       const twelveMonthsAgo = new Date();
       twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+
+      // Check for recently completed jobs (within last 7 days) that might resolve issues
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const { data: recentJobs } = await supabase
+        .from('jobs')
+        .select('machine_id, status')
+        .eq('status', 'completed')
+        .gte('created_at', sevenDaysAgo.toISOString());
+
+      const recentlyServicedMachines = new Set(recentJobs?.map(job => job.machine_id) || []);
 
       const { data: machinePartsData } = await supabase
         .from('machine_parts')
@@ -177,13 +239,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           machineUsageMap.set(part.machine_id, current + part.quantity);
         });
 
-        // Count machines with 3+ parts that aren't dismissed
+        // Count machines with 3+ parts that aren't dismissed and weren't recently serviced
         const dismissedSet = new Set(
-          dismissedAlerts?.map(d => `${d.machine_id}_parts_usage`) || []
+          allDismissedAlerts.map(d => `${d.machine_id}_${d.problem_type}`)
         );
 
         machineUsageMap.forEach((partCount, machineId) => {
-          if (partCount >= 3 && !dismissedSet.has(`${machineId}_parts_usage`)) {
+          const alertKey = `${machineId}_parts_usage`;
+          const isDismissed = dismissedSet.has(alertKey);
+          const wasRecentlyServiced = recentlyServicedMachines.has(machineId);
+          
+          if (partCount >= 3 && !isDismissed && !wasRecentlyServiced) {
             activeMachineProblems++;
           }
         });
@@ -247,6 +313,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     if (score < 70) status = 'critical';
     else if (score < 80) status = 'warning';
     else if (score < 90) status = 'good';
+
+    console.log('📊 Business health calculated:', {
+      score: score.toFixed(1),
+      activeMachineProblems,
+      issues: issues.length,
+      status
+    });
 
     setBusinessHealth({ score, issues, improvements, status });
   };

@@ -1,6 +1,14 @@
 // src/components/VenueReportTemplate.tsx - Fixed version
 import React from 'react';
 
+interface MachineReportData {
+  machine_id: string;
+  machine_name: string;
+  turnover: number;
+  tokens: number;
+  commission: number;
+}
+
 interface VenueReportTemplateProps {
   venue: {
     id: string;
@@ -15,7 +23,8 @@ interface VenueReportTemplateProps {
     serial_number?: string;
     type: string;
   }>;
-  reports: Array<{
+  machineReports?: MachineReportData[];
+  reports?: Array<{
     id: string;
     machine_id: string;
     money_collected: number;
@@ -36,50 +45,75 @@ interface VenueReportTemplateProps {
 export const VenueReportTemplate = ({
   venue,
   machines,
-  reports,
+  machineReports = [],
+  reports = [],
   dateRange,
   companyLogo
 }: VenueReportTemplateProps) => {
-  const totalRevenue = reports.reduce((sum, report) => sum + report.money_collected, 0);
+  
+  // Use machineReports if available, otherwise fall back to reports
+  const totalRevenue = machineReports.length > 0 
+    ? machineReports.reduce((sum, report) => sum + report.turnover, 0)
+    : reports.reduce((sum, report) => sum + report.money_collected, 0);
+    
   const venueCommission = totalRevenue * (venue.commission_percentage / 100);
   const commissionAmount = venueCommission;
-  const totalTokens = reports.reduce((sum, report) => sum + report.tokens_in_game, 0);
-  const allPaid = reports.every(report => report.paid_status);
+  
+  const totalTokens = machineReports.length > 0
+    ? machineReports.reduce((sum, report) => sum + report.tokens, 0)
+    : reports.reduce((sum, report) => sum + report.tokens_in_game, 0);
+    
+  const allPaid = reports.length > 0 ? reports.every(report => report.paid_status) : true;
 
   const generateHTML = () => {
-    const machineRows = machines.map(machine => {
-      const machineReports = reports.filter(r => r.machine_id === machine.id);
-      const machineTurnover = machineReports.reduce((sum, r) => sum + r.money_collected, 0);
-      const machineTokens = machineReports.reduce((sum, r) => sum + r.tokens_in_game, 0);
-      const machineCommission = machineTurnover * (venue.commission_percentage / 100);
-      const machinePaid = machineReports.every(r => r.paid_status);
-      
-      return `
-        <tr>
-          <td style="font-weight: bold;">${machine.name}</td>
-          <td style="font-weight: bold;">${machine.serial_number || 'N/A'}</td>
-          <td style="font-weight: bold;">$${machineTurnover.toFixed(2)}</td>
-          <td style="font-weight: bold;">${machineTokens}</td>
-          <td style="font-weight: bold;">$${machineCommission.toFixed(2)}</td>
-          <td style="font-weight: bold; color: ${machinePaid ? '#28a745' : '#ffc107'};">
-            ${machinePaid ? 'PAID ✓' : 'PENDING'}
-          </td>
-        </tr>
-      `;
-    }).join('');
+    const machineRows = machineReports.length > 0 
+      ? machineReports.map(report => {
+          const machine = machines.find(m => m.id === report.machine_id);
+          return `
+            <tr>
+              <td style="font-weight: bold;">${report.machine_name}</td>
+              <td style="font-weight: bold;">${machine?.serial_number || 'N/A'}</td>
+              <td style="font-weight: bold;">$${report.turnover.toFixed(2)}</td>
+              <td style="font-weight: bold;">${report.tokens}</td>
+              <td style="font-weight: bold;">$${report.commission.toFixed(2)}</td>
+              <td style="font-weight: bold; color: #28a745;">CURRENT</td>
+            </tr>
+          `;
+        }).join('')
+      : machines.map(machine => {
+          const machineReports = reports.filter(r => r.machine_id === machine.id);
+          const machineTurnover = machineReports.reduce((sum, r) => sum + r.money_collected, 0);
+          const machineTokens = machineReports.reduce((sum, r) => sum + r.tokens_in_game, 0);
+          const machineCommission = machineTurnover * (venue.commission_percentage / 100);
+          const machinePaid = machineReports.every(r => r.paid_status);
+          
+          return `
+            <tr>
+              <td style="font-weight: bold;">${machine.name}</td>
+              <td style="font-weight: bold;">${machine.serial_number || 'N/A'}</td>
+              <td style="font-weight: bold;">$${machineTurnover.toFixed(2)}</td>
+              <td style="font-weight: bold;">${machineTokens}</td>
+              <td style="font-weight: bold;">$${machineCommission.toFixed(2)}</td>
+              <td style="font-weight: bold; color: ${machinePaid ? '#28a745' : '#ffc107'};">
+                ${machinePaid ? 'PAID ✓' : 'PENDING'}
+              </td>
+            </tr>
+          `;
+        }).join('');
 
     // Use Game On logo if available
     const logoElement = companyLogo ? 
       `<img src="${companyLogo}" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />` :
       `<img src="/images/logo.jpg" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />`;
 
-    // Fixed venue image handling with proper URL processing
+    // Fixed venue image handling - properly construct the full URL
     const venueImageElement = venue.image_url ? 
       `<div style="text-align: center; margin: 20px 0;">
         <img src="${venue.image_url.startsWith('http') ? venue.image_url : `https://ogbxiolnyzidylzoljuh.supabase.co/storage/v1/object/public/images/${venue.image_url}`}" 
              alt="${venue.name}" 
-             style="max-width: 300px; max-height: 200px; object-fit: cover; border-radius: 8px; border: 2px solid #ddd;" 
-             onerror="this.style.display='none'" />
+             style="max-width: 300px; max-height: 200px; object-fit: cover; border-radius: 8px; border: 2px solid #ddd;"
+             onload="console.log('Venue image loaded successfully')"
+             onerror="console.error('Venue image failed to load:', this.src); this.style.display='none'" />
       </div>` : '';
 
     return `
@@ -199,13 +233,13 @@ export const VenueReportTemplate = ({
                 <h3>Report Period</h3>
                 <p><strong>Date Range:</strong> ${new Date(dateRange.start).toLocaleDateString()} - ${new Date(dateRange.end).toLocaleDateString()}</p>
                 <p><strong>Total Machines:</strong> ${machines.length}</p>
-                <p><strong>Total Reports:</strong> ${reports.length}</p>
+                <p><strong>Report Type:</strong> ${machineReports.length > 0 ? 'Manual Entry' : 'Historical Data'}</p>
               </div>
             </div>
             
             <div class="summary-stats">
               <div class="stat-card">
-                <div class="stat-value">$${totalRevenue.toFixed(2)}</div>
+                <div class="stat-value">${totalRevenue.toFixed(2)}</div>
                 <div class="stat-label">Machine Turnover</div>
               </div>
               <div class="stat-card">
@@ -217,7 +251,7 @@ export const VenueReportTemplate = ({
                 <div class="stat-label">Venue Commission</div>
               </div>
               <div class="stat-card">
-                <div class="stat-value">$${commissionAmount.toFixed(2)}</div>
+                <div class="stat-value">${commissionAmount.toFixed(2)}</div>
                 <div class="stat-label">Commission Amount</div>
               </div>
             </div>
@@ -228,7 +262,7 @@ export const VenueReportTemplate = ({
             
             <div class="commission-highlight">
               <h3>Commission Payment Due</h3>
-              <p>Total Commission Amount: <strong>$${commissionAmount.toFixed(2)}</strong></p>
+              <p>Total Commission Amount: <strong>${commissionAmount.toFixed(2)}</strong></p>
               <p>Payment will be processed within 7 business days</p>
             </div>
             

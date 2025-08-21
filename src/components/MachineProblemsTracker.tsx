@@ -80,7 +80,7 @@ const MachineProblemsTracker: React.FC = () => {
     try {
       setLoading(true);
       
-      // Load dismissed alerts
+      // Load dismissed alerts first
       await loadDismissedAlerts();
       
       // Get all machine parts used in the last 12 months
@@ -99,6 +99,19 @@ const MachineProblemsTracker: React.FC = () => {
         console.error('Error fetching machine parts:', error);
         return;
       }
+
+      // Also check for recent job completions that might indicate resolved issues
+      const { data: recentJobs, error: jobsError } = await supabase
+        .from('jobs')
+        .select('machine_id, status, created_at, scheduled_date')
+        .eq('status', 'completed')
+        .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()); // Last 7 days
+
+      if (jobsError) {
+        console.warn('Error fetching recent jobs:', jobsError);
+      }
+
+      const recentlyServicedMachines = new Set(recentJobs?.map(job => job.machine_id) || []);
 
       // Group by machine and analyze
       const machineUsageMap = new Map<string, MachinePart[]>();
@@ -141,8 +154,11 @@ const MachineProblemsTracker: React.FC = () => {
         const alertKey = `${machineId}_parts_usage`;
         const isDismissed = dismissedAlerts.has(alertKey);
 
-        // Only include machines that used 3 or more parts and are not dismissed
-        if (totalPartsUsed >= 3 && !isDismissed) {
+        // Check if machine was recently serviced (within last 7 days)
+        const wasRecentlyServiced = recentlyServicedMachines.has(machineId);
+
+        // Only include machines that used 3 or more parts, are not dismissed, and weren't recently serviced
+        if (totalPartsUsed >= 3 && !isDismissed && !wasRecentlyServiced) {
           problemMachinesData.push({
             machine_id: machineId,
             machine_name: machine.name,
@@ -260,15 +276,53 @@ const MachineProblemsTracker: React.FC = () => {
     setShowServiceDialog(true);
   };
 
-  const handleServiceScheduled = () => {
+  const handleServiceScheduled = async () => {
     if (selectedMachine) {
       // Auto-dismiss the alert when service is scheduled
-      confirmDismissAlert();
-      
-      toast({
-        title: 'Service Scheduled',
-        description: `Maintenance scheduled for ${selectedMachine.machine_name}. Alert has been automatically dismissed.`,
-      });
+      try {
+        console.log('📝 Auto-dismissing alert for scheduled maintenance:', selectedMachine.machine_name);
+
+        // Mark as dismissed in database
+        const { error } = await supabase
+          .from('machine_problems')
+          .insert([{
+            machine_id: selectedMachine.machine_id,
+            problem_type: 'parts_usage',
+            dismissed_at: new Date().toISOString(),
+            dismissed_by: 'auto_service_scheduled'
+          }]);
+
+        if (error) {
+          // Fallback to localStorage
+          const alertKey = `${selectedMachine.machine_id}_parts_usage`;
+          const newDismissed = new Set(dismissedAlerts);
+          newDismissed.add(alertKey);
+          setDismissedAlerts(newDismissed);
+          
+          const dismissedData = Array.from(newDismissed);
+          localStorage.setItem('dismissedMachineAlerts', JSON.stringify(dismissedData));
+        } else {
+          await loadDismissedAlerts();
+        }
+
+        // Remove from current problem machines
+        setProblemMachines(prev => prev.filter(m => m.machine_id !== selectedMachine.machine_id));
+
+        toast({
+          title: 'Service Scheduled',
+          description: `Maintenance scheduled for ${selectedMachine.machine_name}. Alert has been automatically dismissed.`,
+        });
+
+        // Trigger a refresh of the business health calculation
+        window.dispatchEvent(new CustomEvent('machineProblemsUpdated'));
+        
+      } catch (error) {
+        console.error('Error auto-dismissing alert:', error);
+        toast({
+          title: 'Service Scheduled',
+          description: `Maintenance scheduled for ${selectedMachine.machine_name}.`,
+        });
+      }
     }
     
     setShowServiceDialog(false);
@@ -340,7 +394,7 @@ const MachineProblemsTracker: React.FC = () => {
         <CardContent>
           <p className="text-green-600 font-medium">✅ All machines are operating normally!</p>
           <p className="text-gray-500 text-sm mt-1">
-            No machines have used 3+ parts in the last 12 months.
+            No machines have used 3+ parts in the last 12 months or have been recently serviced.
           </p>
         </CardContent>
       </Card>

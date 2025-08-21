@@ -1,12 +1,15 @@
-// src/components/VenueReportTemplate.tsx - Fixed version
+// src/components/VenueReportTemplate.tsx - Complete fixed version
 import React from 'react';
 
 interface MachineReportData {
   machine_id: string;
   machine_name: string;
-  turnover: number;
-  tokens: number;
-  commission: number;
+  machine_serial: string;
+  total_turnover: number;
+  total_tokens: number;
+  commission_amount: number;
+  report_count: number;
+  has_data: boolean;
 }
 
 interface VenueReportTemplateProps {
@@ -41,6 +44,9 @@ interface VenueReportTemplateProps {
   companyLogo?: string;
 }
 
+// Export the interface for use in other components
+export type { MachineReportData };
+
 // Changed from React component to utility function
 export const VenueReportTemplate = ({
   venue,
@@ -51,62 +57,84 @@ export const VenueReportTemplate = ({
   companyLogo
 }: VenueReportTemplateProps) => {
   
-  // Use machineReports if available, otherwise fall back to reports
+  // Use machineReports if available (new system), otherwise fall back to reports (old system)
   const totalRevenue = machineReports.length > 0 
-    ? machineReports.reduce((sum, report) => sum + report.turnover, 0)
+    ? machineReports.reduce((sum, report) => sum + report.total_turnover, 0)
     : reports.reduce((sum, report) => sum + report.money_collected, 0);
     
   const venueCommission = totalRevenue * (venue.commission_percentage / 100);
   const commissionAmount = venueCommission;
   
   const totalTokens = machineReports.length > 0
-    ? machineReports.reduce((sum, report) => sum + report.tokens, 0)
+    ? machineReports.reduce((sum, report) => sum + report.total_tokens, 0)
     : reports.reduce((sum, report) => sum + report.tokens_in_game, 0);
     
   const allPaid = reports.length > 0 ? reports.every(report => report.paid_status) : true;
+  const reportPeriod = `${new Date(dateRange.start).toLocaleDateString()} - ${new Date(dateRange.end).toLocaleDateString()}`;
 
   const generateHTML = () => {
+    // Generate machine rows using the new machineReports system
     const machineRows = machineReports.length > 0 
-      ? machineReports.map(report => {
-          const machine = machines.find(m => m.id === report.machine_id);
-          return `
-            <tr>
-              <td style="font-weight: bold;">${report.machine_name}</td>
-              <td style="font-weight: bold;">${machine?.serial_number || 'N/A'}</td>
-              <td style="font-weight: bold;">$${report.turnover.toFixed(2)}</td>
-              <td style="font-weight: bold;">${report.tokens}</td>
-              <td style="font-weight: bold;">$${report.commission.toFixed(2)}</td>
-              <td style="font-weight: bold; color: #28a745;">CURRENT</td>
-            </tr>
-          `;
-        }).join('')
+      ? machineReports.map(report => `
+          <tr>
+            <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef;">
+              ${report.machine_name}
+            </td>
+            <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef;">
+              ${report.machine_serial}
+            </td>
+            <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef; color: #28a745;">
+              $${report.total_turnover.toFixed(2)}
+            </td>
+            <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef;">
+              ${report.total_tokens}
+            </td>
+            <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef; color: #007bff;">
+              $${report.commission_amount.toFixed(2)}
+            </td>
+            <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef; color: ${report.has_data ? '#28a745' : '#dc3545'};">
+              ${report.has_data ? `${report.report_count} Reports` : 'NO DATA'}
+            </td>
+          </tr>
+        `).join('')
       : machines.map(machine => {
-          const machineReports = reports.filter(r => r.machine_id === machine.id);
-          const machineTurnover = machineReports.reduce((sum, r) => sum + r.money_collected, 0);
-          const machineTokens = machineReports.reduce((sum, r) => sum + r.tokens_in_game, 0);
+          // Fallback to old system
+          const machineReportsForMachine = reports.filter(r => r.machine_id === machine.id);
+          const machineTurnover = machineReportsForMachine.reduce((sum, r) => sum + r.money_collected, 0);
+          const machineTokens = machineReportsForMachine.reduce((sum, r) => sum + r.tokens_in_game, 0);
           const machineCommission = machineTurnover * (venue.commission_percentage / 100);
-          const machinePaid = machineReports.every(r => r.paid_status);
+          const machinePaid = machineReportsForMachine.every(r => r.paid_status);
           
           return `
             <tr>
-              <td style="font-weight: bold;">${machine.name}</td>
-              <td style="font-weight: bold;">${machine.serial_number || 'N/A'}</td>
-              <td style="font-weight: bold;">$${machineTurnover.toFixed(2)}</td>
-              <td style="font-weight: bold;">${machineTokens}</td>
-              <td style="font-weight: bold;">$${machineCommission.toFixed(2)}</td>
-              <td style="font-weight: bold; color: ${machinePaid ? '#28a745' : '#ffc107'};">
+              <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef;">
+                ${machine.name}
+              </td>
+              <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef;">
+                ${machine.serial_number || 'N/A'}
+              </td>
+              <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef; color: #28a745;">
+                $${machineTurnover.toFixed(2)}
+              </td>
+              <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef;">
+                ${machineTokens}
+              </td>
+              <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef; color: #007bff;">
+                $${machineCommission.toFixed(2)}
+              </td>
+              <td style="font-weight: bold; padding: 12px; border-bottom: 1px solid #e9ecef; color: ${machinePaid ? '#28a745' : '#ffc107'};">
                 ${machinePaid ? 'PAID ✓' : 'PENDING'}
               </td>
             </tr>
           `;
         }).join('');
 
-    // Use Game On logo if available
+    // FIXED: Proper logo handling with no overlap
     const logoElement = companyLogo ? 
-      `<img src="${companyLogo}" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />` :
-      `<img src="/images/logo.jpg" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />`;
+      `<img src="${companyLogo}" alt="Game On Entertainment Logo" style="width: 120px; height: 70px; object-fit: contain;" />` :
+      `<img src="/images/logo.jpg" alt="Game On Entertainment Logo" style="width: 120px; height: 70px; object-fit: contain;" />`;
 
-    // Fixed venue image handling - properly construct the full URL
+    // FIXED: Venue image handling with proper error handling
     const venueImageElement = venue.image_url ? 
       `<div style="text-align: center; margin: 20px 0;">
         <img src="${venue.image_url.startsWith('http') ? venue.image_url : `https://ogbxiolnyzidylzoljuh.supabase.co/storage/v1/object/public/images/${venue.image_url}`}" 
@@ -115,6 +143,9 @@ export const VenueReportTemplate = ({
              onload="console.log('Venue image loaded successfully')"
              onerror="console.error('Venue image failed to load:', this.src); this.style.display='none'" />
       </div>` : '';
+
+    const machinesWithData = machineReports.filter(m => m.has_data).length;
+    const totalMachines = machineReports.length || machines.length;
 
     return `
       <!DOCTYPE html>
@@ -128,45 +159,154 @@ export const VenueReportTemplate = ({
             background: white; 
             padding: 20px; 
             font-weight: bold;
+            line-height: 1.4;
           }
-          .container { max-width: 1000px; margin: 0 auto; background: white; border: 1px solid #ddd; }
-          .header { background: #2c3e50; color: white; padding: 30px; text-align: center; position: relative; }
-          .company-branding { position: absolute; top: 20px; right: 30px; text-align: right; }
-          .company-name { font-size: 14px; font-weight: bold; color: white; margin: 0; }
-          .title { font-size: 2em; margin-bottom: 10px; font-weight: bold; }
-          .subtitle { font-size: 1.2em; opacity: 0.9; font-weight: bold; }
+          .container { 
+            max-width: 1000px; 
+            margin: 0 auto; 
+            background: white; 
+            border: 1px solid #ddd; 
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+          }
+          
+          /* FIXED: Header layout to prevent logo overlap */
+          .header { 
+            background: #2c3e50; 
+            color: white; 
+            padding: 40px 30px 30px 30px; 
+            position: relative;
+            min-height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+          
+          .company-branding { 
+            position: absolute; 
+            top: 20px; 
+            right: 30px; 
+            text-align: right;
+            z-index: 10;
+          }
+          
+          .company-name { 
+            font-size: 12px; 
+            font-weight: bold; 
+            color: white; 
+            margin: 5px 0 0 0;
+            text-align: center;
+          }
+          
+          .header-content {
+            text-align: center;
+            flex: 1;
+            margin-right: 150px; /* Space for logo */
+          }
+          
+          .title { 
+            font-size: 2.2em; 
+            margin-bottom: 10px; 
+            font-weight: bold;
+            color: white;
+          }
+          
+          .subtitle { 
+            font-size: 1.3em; 
+            opacity: 0.9; 
+            font-weight: bold;
+            color: white;
+          }
+          
           .content { padding: 30px; }
           .info-section { margin-bottom: 30px; }
-          .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px; }
-          .info-card { background: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 4px solid #667eea; }
-          .info-card h3 { color: #2c3e50; margin-bottom: 15px; font-weight: bold; }
-          .info-card p { margin-bottom: 8px; font-weight: bold; }
-          .summary-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin: 30px 0; }
-          .stat-card { background: #667eea; color: white; padding: 20px; border-radius: 8px; text-align: center; }
-          .stat-value { font-size: 1.8em; font-weight: bold; margin-bottom: 5px; }
-          .stat-label { font-size: 0.9em; opacity: 0.9; font-weight: bold; }
+          .info-grid { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 30px; 
+            margin-bottom: 30px; 
+          }
+          
+          .info-card { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            border-radius: 8px; 
+            border-left: 4px solid #667eea; 
+          }
+          
+          .info-card h3 { 
+            color: #2c3e50; 
+            margin-bottom: 15px; 
+            font-weight: bold; 
+            font-size: 1.1em;
+          }
+          
+          .info-card p { 
+            margin-bottom: 8px; 
+            font-weight: bold;
+            font-size: 0.95em;
+          }
+          
+          .summary-stats { 
+            display: grid; 
+            grid-template-columns: repeat(4, 1fr); 
+            gap: 20px; 
+            margin: 30px 0; 
+          }
+          
+          .stat-card { 
+            background: #667eea; 
+            color: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            text-align: center; 
+          }
+          
+          .stat-value { 
+            font-size: 1.8em; 
+            font-weight: bold; 
+            margin-bottom: 5px; 
+          }
+          
+          .stat-label { 
+            font-size: 0.9em; 
+            opacity: 0.9; 
+            font-weight: bold; 
+          }
+          
           .commission-highlight { 
-            background: #28a745; 
+            background: linear-gradient(135deg, #28a745, #20c997); 
             color: white; 
             padding: 25px; 
             border-radius: 8px; 
             text-align: center; 
             margin: 30px 0; 
             font-weight: bold;
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
           }
-          .commission-highlight h3 { font-size: 1.4em; margin-bottom: 10px; font-weight: bold; }
-          .commission-highlight p { font-size: 1.1em; font-weight: bold; }
+          
+          .commission-highlight h3 { 
+            font-size: 1.4em; 
+            margin-bottom: 10px; 
+            font-weight: bold; 
+          }
+          
+          .commission-highlight p { 
+            font-size: 1.1em; 
+            font-weight: bold; 
+          }
+          
           .token-notice {
-            background: #e0f2fe;
-            border: 2px solid #0288d1;
+            background: #e3f2fd;
+            border: 2px solid #2196f3;
             border-radius: 8px;
             padding: 15px;
             margin: 20px 0;
             text-align: center;
             font-weight: bold;
-            color: #01579b;
+            color: #1565c0;
             font-size: 14px;
           }
+          
           .payment-status {
             background: ${allPaid ? '#e8f5e8' : '#fff3cd'};
             border: 2px solid ${allPaid ? '#4caf50' : '#ffc107'};
@@ -178,20 +318,42 @@ export const VenueReportTemplate = ({
             color: ${allPaid ? '#2e7d32' : '#f57c00'};
             font-size: 16px;
           }
-          .machine-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+          
+          .machine-table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin: 20px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-radius: 8px;
+            overflow: hidden;
+          }
+          
           .machine-table th { 
             background: #495057; 
             color: white; 
-            padding: 15px; 
+            padding: 15px 12px; 
             text-align: left; 
             font-weight: bold;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
           }
+          
           .machine-table td { 
             padding: 12px; 
             border-bottom: 1px solid #e9ecef; 
             font-weight: bold;
+            font-size: 0.9em;
           }
-          .machine-table tr:hover { background: #f8f9fa; }
+          
+          .machine-table tr:hover { 
+            background: #f8f9fa; 
+          }
+          
+          .machine-table tr:nth-child(even) {
+            background: #f8f9fa;
+          }
+          
           .footer { 
             background: #f8f9fa; 
             padding: 20px; 
@@ -200,10 +362,44 @@ export const VenueReportTemplate = ({
             border-top: 1px solid #e9ecef;
             font-weight: bold;
           }
-          .page-break { page-break-before: always; }
+          
+          .page-break { 
+            page-break-before: always; 
+          }
+          
+          .revenue-breakdown {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+          }
+          
+          .revenue-breakdown h4 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+          }
+          
+          .breakdown-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 0.95em;
+          }
+          
+          .breakdown-item:last-child {
+            border-bottom: none;
+            font-weight: bold;
+            font-size: 1.1em;
+            color: #28a745;
+          }
+          
           @media print { 
-            body { background: white; } 
+            body { background: white; padding: 0; } 
             .page-break { page-break-before: always; }
+            .container { box-shadow: none; border: none; }
           }
         </style>
       </head>
@@ -214,8 +410,10 @@ export const VenueReportTemplate = ({
               ${logoElement}
               <p class="company-name">Game On Entertainment</p>
             </div>
-            <h1 class="title">Venue Commission Report</h1>
-            <p class="subtitle">${venue.name}</p>
+            <div class="header-content">
+              <h1 class="title">Venue Commission Report</h1>
+              <p class="subtitle">${venue.name}</p>
+            </div>
           </div>
           
           <div class="content">
@@ -227,53 +425,73 @@ export const VenueReportTemplate = ({
                 <p><strong>Name:</strong> ${venue.name}</p>
                 ${venue.address ? `<p><strong>Address:</strong> ${venue.address}</p>` : ''}
                 <p><strong>Commission Rate:</strong> ${venue.commission_percentage}%</p>
-                <p><strong>Commission Amount:</strong> $${commissionAmount.toFixed(2)}</p>
+                <p><strong>Report Period:</strong> ${reportPeriod}</p>
               </div>
               <div class="info-card">
-                <h3>Report Period</h3>
-                <p><strong>Date Range:</strong> ${new Date(dateRange.start).toLocaleDateString()} - ${new Date(dateRange.end).toLocaleDateString()}</p>
-                <p><strong>Total Machines:</strong> ${machines.length}</p>
-                <p><strong>Report Type:</strong> ${machineReports.length > 0 ? 'Manual Entry' : 'Historical Data'}</p>
+                <h3>Report Summary</h3>
+                <p><strong>Total Machines:</strong> ${totalMachines}</p>
+                <p><strong>Machines with Data:</strong> ${machinesWithData}/${totalMachines}</p>
+                <p><strong>Data Source:</strong> Machine Reports (${dateRange.start} to ${dateRange.end})</p>
+                <p><strong>Generated:</strong> ${new Date().toLocaleDateString()}</p>
               </div>
             </div>
             
             <div class="summary-stats">
               <div class="stat-card">
-                <div class="stat-value">${totalRevenue.toFixed(2)}</div>
-                <div class="stat-label">Machine Turnover</div>
+                <div class="stat-value">$${totalRevenue.toFixed(2)}</div>
+                <div class="stat-label">Total Machine Revenue</div>
               </div>
               <div class="stat-card">
                 <div class="stat-value">${totalTokens}</div>
-                <div class="stat-label">Tokens in Machines</div>
+                <div class="stat-label">Total Tokens in Machines</div>
               </div>
               <div class="stat-card">
                 <div class="stat-value">${venue.commission_percentage}%</div>
-                <div class="stat-label">Venue Commission</div>
+                <div class="stat-label">Commission Rate</div>
               </div>
               <div class="stat-card">
-                <div class="stat-value">${commissionAmount.toFixed(2)}</div>
+                <div class="stat-value">$${commissionAmount.toFixed(2)}</div>
                 <div class="stat-label">Commission Amount</div>
               </div>
             </div>
             
+            <div class="revenue-breakdown">
+              <h4>Revenue Breakdown</h4>
+              <div class="breakdown-item">
+                <span>Total Machine Revenue (${reportPeriod}):</span>
+                <span>$${totalRevenue.toFixed(2)}</span>
+              </div>
+              <div class="breakdown-item">
+                <span>Commission Rate:</span>
+                <span>${venue.commission_percentage}%</span>
+              </div>
+              <div class="breakdown-item">
+                <span>Your Commission Amount:</span>
+                <span>$${commissionAmount.toFixed(2)}</span>
+              </div>
+            </div>
+            
             <div class="token-notice">
-              <strong>Note:</strong> Commission on the "tokens in game" is paid via the token machine commission
+              <strong>Important Note:</strong> Commission on tokens shown in machines is paid separately via the token machine commission system
             </div>
             
             <div class="commission-highlight">
-              <h3>Commission Payment Due</h3>
-              <p>Total Commission Amount: <strong>${commissionAmount.toFixed(2)}</strong></p>
+              <h3>💰 Commission Payment Due</h3>
+              <p>Total Commission Amount: <strong>$${commissionAmount.toFixed(2)}</strong></p>
               <p>Payment will be processed within 7 business days</p>
             </div>
             
             <div class="payment-status">
-              <strong>Payment Status: ${allPaid ? 'ALL COMMISSIONS PAID ✓' : 'PENDING PAYMENTS'}</strong>
+              <strong>Payment Status: ${allPaid ? 'ALL COMMISSIONS PAID ✓' : 'PENDING PAYMENT'}</strong>
             </div>
           </div>
           
           <div class="page-break">
             <div class="content">
-              <h3 style="color: #2c3e50; margin-bottom: 15px; font-weight: bold;">Machine Performance Breakdown</h3>
+              <h3 style="color: #2c3e50; margin-bottom: 20px; font-weight: bold; font-size: 1.3em;">
+                📊 Machine Performance Breakdown (${reportPeriod})
+              </h3>
+              
               <table class="machine-table">
                 <thead>
                   <tr>
@@ -282,20 +500,34 @@ export const VenueReportTemplate = ({
                     <th>Machine Turnover</th>
                     <th>Tokens in Machine</th>
                     <th>Commission Earned</th>
-                    <th>Payment Status</th>
+                    <th>Report Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${machineRows}
                 </tbody>
               </table>
+              
+              ${machinesWithData < totalMachines ? `
+                <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin: 20px 0; color: #856404;">
+                  <strong>⚠️ Notice:</strong> ${totalMachines - machinesWithData} machine(s) have no reports for the selected date range. 
+                  These machines show $0.00 revenue and are not included in commission calculations.
+                </div>
+              ` : ''}
+              
+              <div style="background: #e8f5e8; border: 1px solid #c3e6c3; border-radius: 8px; padding: 15px; margin: 20px 0; color: #155724;">
+                <strong>✅ Data Verification:</strong> This report is generated from actual machine reports submitted between ${reportPeriod}. 
+                All revenue figures are based on real cash/paywave collections from your machines.
+              </div>
             </div>
           </div>
           
           <div class="footer">
-            <p>Report generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</p>
-            <p>Date Range: ${new Date(dateRange.start).toLocaleDateString()} to ${new Date(dateRange.end).toLocaleDateString()}</p>
-            <p><strong>Game On Entertainment</strong> - Thank you for your continued partnership!</p>
+            <p><strong>Report Details</strong></p>
+            <p>Generated: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</p>
+            <p>Report Period: ${reportPeriod}</p>
+            <p>Total Revenue: $${totalRevenue.toFixed(2)} | Commission: $${commissionAmount.toFixed(2)}</p>
+            <p style="margin-top: 10px; font-size: 1.1em;"><strong>Game On Entertainment</strong> - Thank you for your partnership!</p>
           </div>
         </div>
       </body>
@@ -307,7 +539,10 @@ export const VenueReportTemplate = ({
     generateHTML,
     totalRevenue,
     venueCommission: commissionAmount,
-    totalTokens
+    totalTokens,
+    reportPeriod,
+    machinesWithData: machineReports.filter(m => m.has_data).length,
+    totalMachines: machineReports.length || machines.length
   };
 };
 

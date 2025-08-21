@@ -4,22 +4,26 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import { useAppContext } from '@/contexts/AppContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { Calculator, ArrowLeft, FileText, Building2, DollarSign } from 'lucide-react';
-import { VenueReportTemplate } from '@/components/VenueReportTemplate';
+import { Calculator, ArrowLeft, Building2, DollarSign, Calendar, FileCheck, AlertTriangle } from 'lucide-react';
+import { VenueReportTemplate, type MachineReportData } from '@/components/VenueReportTemplate';
 
 interface VenueReportGeneratorProps {
   onBack?: () => void;
 }
 
-interface MachineReportData {
-  machine_id: string;
-  machine_name: string;
-  turnover: number;
-  tokens: number;
-  commission: number;
+interface VenueReportData {
+  venue: any;
+  dateRange: { start: string; end: string };
+  machineReports: MachineReportData[];
+  totalRevenue: number;
+  totalCommission: number;
+  totalTokens: number;
+  totalMachines: number;
+  machinesWithData: number;
 }
 
 const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) => {
@@ -30,56 +34,149 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
     start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     end: new Date().toISOString().split('T')[0]
   });
-  const [machineReports, setMachineReports] = useState<MachineReportData[]>([]);
+  const [reportData, setReportData] = useState<VenueReportData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [reportData, setReportData] = useState<any>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
-  // Initialize machine reports when venue is selected
+  // Automatically analyze when venue or date range changes
   useEffect(() => {
-    if (selectedVenue) {
-      const venueMachines = machines.filter(m => m.venue_id === selectedVenue);
-      const initialReports: MachineReportData[] = venueMachines.map(machine => ({
-        machine_id: machine.id,
-        machine_name: machine.name,
-        turnover: 0,
-        tokens: 0,
-        commission: 0
-      }));
-      setMachineReports(initialReports);
+    if (selectedVenue && dateRange.start && dateRange.end) {
+      analyzeVenueData();
+    } else {
+      setReportData(null);
     }
-  }, [selectedVenue, machines]);
+  }, [selectedVenue, dateRange]);
 
-  const updateMachineReport = (machineId: string, field: keyof MachineReportData, value: number) => {
-    setMachineReports(prev => prev.map(report => 
-      report.machine_id === machineId ? { ...report, [field]: value } : report
-    ));
-  };
+  const analyzeVenueData = async () => {
+    if (!selectedVenue || !dateRange.start || !dateRange.end) return;
 
-  const calculateCommission = (machineId: string, turnover: number) => {
-    const venue = venues.find(v => v.id === selectedVenue);
-    if (!venue) return 0;
-    
-    const commission = turnover * (venue.commission_percentage / 100);
-    updateMachineReport(machineId, 'commission', commission);
-    return commission;
+    setAnalyzing(true);
+    try {
+      console.log('📊 Analyzing venue data for:', selectedVenue, 'from', dateRange.start, 'to', dateRange.end);
+
+      const venue = venues.find(v => v.id === selectedVenue);
+      if (!venue) throw new Error('Venue not found');
+
+      // Get all machines for this venue
+      const venueMachines = machines.filter(m => m.venue_id === selectedVenue);
+      console.log('🎮 Found machines for venue:', venueMachines.length);
+
+      if (venueMachines.length === 0) {
+        toast({
+          title: 'No Machines',
+          description: 'This venue has no machines assigned to it.',
+          variant: 'destructive'
+        });
+        setReportData(null);
+        return;
+      }
+
+      // Fetch machine reports for the date range using report_date field
+      console.log('🔍 Fetching machine reports with query:');
+      console.log('WHERE machine_id IN', venueMachines.map(m => m.id));
+      console.log('AND report_date >=', dateRange.start);
+      console.log('AND report_date <=', dateRange.end);
+
+      const { data: machineReports, error } = await supabase
+        .from('machine_reports')
+        .select('*')
+        .in('machine_id', venueMachines.map(m => m.id))
+        .gte('report_date', dateRange.start)
+        .lte('report_date', dateRange.end)
+        .order('report_date', { ascending: false });
+
+      if (error) {
+        console.error('❌ Error fetching machine reports:', error);
+        throw error;
+      }
+
+      console.log('📊 Found machine reports:', machineReports?.length || 0);
+      
+      // Log sample reports for debugging
+      if (machineReports && machineReports.length > 0) {
+        console.log('📋 Sample report:', {
+          machine_id: machineReports[0].machine_id,
+          report_date: machineReports[0].report_date,
+          money_collected: machineReports[0].money_collected,
+          tokens_in_game: machineReports[0].tokens_in_game
+        });
+      }
+
+      // Aggregate data by machine
+      const machineReportSummaries: MachineReportData[] = venueMachines.map(machine => {
+        const reportsForMachine = machineReports?.filter(r => r.machine_id === machine.id) || [];
+        
+        console.log(`🎰 Machine ${machine.name}: found ${reportsForMachine.length} reports in date range`);
+        
+        const totalTurnover = reportsForMachine.reduce((sum, report) => sum + (report.money_collected || 0), 0);
+        const totalTokens = reportsForMachine.reduce((sum, report) => sum + (report.tokens_in_game || 0), 0);
+        const commissionAmount = totalTurnover * (venue.commission_percentage / 100);
+
+        return {
+          machine_id: machine.id,
+          machine_name: machine.name,
+          machine_serial: machine.serial_number || 'N/A',
+          total_turnover: totalTurnover,
+          total_tokens: totalTokens,
+          commission_amount: commissionAmount,
+          report_count: reportsForMachine.length,
+          has_data: reportsForMachine.length > 0
+        };
+      });
+
+      // Calculate totals
+      const totalRevenue = machineReportSummaries.reduce((sum, m) => sum + m.total_turnover, 0);
+      const totalCommission = machineReportSummaries.reduce((sum, m) => sum + m.commission_amount, 0);
+      const totalTokens = machineReportSummaries.reduce((sum, m) => sum + m.total_tokens, 0);
+      const machinesWithData = machineReportSummaries.filter(m => m.has_data).length;
+
+      const reportData: VenueReportData = {
+        venue,
+        dateRange,
+        machineReports: machineReportSummaries,
+        totalRevenue,
+        totalCommission,
+        totalTokens,
+        totalMachines: venueMachines.length,
+        machinesWithData
+      };
+
+      setReportData(reportData);
+
+      console.log('✅ Venue analysis complete:', {
+        totalRevenue: totalRevenue.toFixed(2),
+        totalCommission: totalCommission.toFixed(2),
+        machinesWithData: `${machinesWithData}/${venueMachines.length}`,
+        dateRange: `${dateRange.start} to ${dateRange.end}`
+      });
+
+    } catch (error: any) {
+      console.error('❌ Error analyzing venue data:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to analyze venue data',
+        variant: 'destructive'
+      });
+      setReportData(null);
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
   const generateVenueReport = async () => {
-    if (!selectedVenue || !dateRange.start || !dateRange.end) {
-      toast({ 
-        title: 'Error', 
-        description: 'Please select venue and date range', 
-        variant: 'destructive' 
+    if (!reportData) {
+      toast({
+        title: 'Error',
+        description: 'No venue data available to generate report',
+        variant: 'destructive'
       });
       return;
     }
 
-    // Validate that at least one machine has turnover data
-    const totalTurnover = machineReports.reduce((sum, report) => sum + report.turnover, 0);
-    if (totalTurnover === 0) {
+    if (reportData.totalRevenue === 0) {
       toast({
-        title: 'Error',
-        description: 'Please enter turnover amounts for at least one machine',
+        title: 'No Revenue Data',
+        description: `No machine reports found for this venue between ${dateRange.start} and ${dateRange.end}. Please ensure machine reports exist for this period.`,
         variant: 'destructive'
       });
       return;
@@ -87,53 +184,24 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
 
     setLoading(true);
     try {
-      const venue = venues.find(v => v.id === selectedVenue);
-      if (!venue) throw new Error('Venue not found');
-
-      console.log('📊 Generating venue report for:', venue.name);
-
-      const venueMachines = machines.filter(m => m.venue_id === selectedVenue);
-      
-      const totalCommission = machineReports.reduce((sum, report) => sum + report.commission, 0);
-      const totalTokens = machineReports.reduce((sum, report) => sum + report.tokens, 0);
-
-      const reportSummary = {
-        venue: {
-          ...venue,
-          image_url: venue.image_url || null
-        },
-        machines: venueMachines,
-        machineReports: machineReports,
-        dateRange,
-        companyLogo,
-        totalRevenue: totalTurnover,
-        venueCommissionAmount: totalCommission,
-        totalTokens,
-        totalReports: machineReports.filter(r => r.turnover > 0).length
-      };
-
-      console.log('📊 Report summary:', {
-        venue: venue.name,
-        totalRevenue: totalTurnover,
-        venueCommissionAmount: totalCommission,
-        totalReports: reportSummary.totalReports
-      });
+      console.log('📄 Generating venue report...');
 
       // Save venue report to database
       const venueReportData = {
-        venue_id: venue.id,
-        venue_name: venue.name,
-        venue_address: venue.address || '',
-        total_revenue: totalTurnover,
-        venue_commission_percentage: venue.commission_percentage,
-        venue_commission_amount: totalCommission,
-        total_machines: venueMachines.length,
-        total_reports: reportSummary.totalReports,
-        date_range_start: dateRange.start,
-        date_range_end: dateRange.end,
+        venue_id: reportData.venue.id,
+        venue_name: reportData.venue.name,
+        venue_address: reportData.venue.address || '',
+        total_revenue: reportData.totalRevenue,
+        venue_commission_percentage: reportData.venue.commission_percentage,
+        venue_commission_amount: reportData.totalCommission,
+        total_machines: reportData.totalMachines,
+        total_reports: reportData.machineReports.reduce((sum, m) => sum + m.report_count, 0),
+        date_range_start: reportData.dateRange.start,
+        date_range_end: reportData.dateRange.end,
         report_date: new Date().toISOString().split('T')[0],
         paid_status: false,
-        machine_data: JSON.stringify(machineReports)
+        machine_data: JSON.stringify(reportData.machineReports),
+        notes: `Generated from ${reportData.machinesWithData} machines with data out of ${reportData.totalMachines} total machines. Date range: ${reportData.dateRange.start} to ${reportData.dateRange.end}`
       };
 
       const { data: savedReport, error: saveError } = await supabase
@@ -149,15 +217,20 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
         console.log('✅ Venue report saved to database:', savedReport);
       }
 
-      // Generate and display the report
+      // Generate and display the report using the fixed template
       const reportTemplate = VenueReportTemplate({
-        ...reportSummary,
+        venue: reportData.venue,
+        machines: machines.filter(m => m.venue_id === selectedVenue),
+        machineReports: reportData.machineReports,
         reports: [], // We're using machineReports instead
+        dateRange: reportData.dateRange,
+        companyLogo
       });
+
       const htmlContent = reportTemplate.generateHTML();
 
       // Open in new window for printing
-      const printWindow = window.open('', '_blank', 'width=1000,height=800');
+      const printWindow = window.open('', '_blank', 'width=1200,height=800');
       if (printWindow) {
         printWindow.document.write(htmlContent);
         printWindow.document.close();
@@ -172,26 +245,24 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `venue-report-${venue.name}-${dateRange.start}-${dateRange.end}.html`;
+        link.download = `venue-report-${reportData.venue.name}-${reportData.dateRange.start}-${reportData.dateRange.end}.html`;
         link.click();
         URL.revokeObjectURL(url);
       }
 
-      setReportData(reportSummary);
-
-      toast({ 
-        title: 'Success', 
-        description: `Venue report generated! Revenue: $${totalTurnover.toFixed(2)}, Commission: $${totalCommission.toFixed(2)}` 
+      toast({
+        title: 'Success',
+        description: `Venue report generated! Total Revenue: $${reportData.totalRevenue.toFixed(2)}, Commission: $${reportData.totalCommission.toFixed(2)}`
       });
 
       await refreshData();
 
     } catch (error: any) {
       console.error('❌ Error generating venue report:', error);
-      toast({ 
-        title: 'Error', 
-        description: error.message || 'Failed to generate venue report', 
-        variant: 'destructive' 
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to generate venue report',
+        variant: 'destructive'
       });
     } finally {
       setLoading(false);
@@ -199,8 +270,6 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
   };
 
   const selectedVenueData = venues.find(v => v.id === selectedVenue);
-  const totalTurnover = machineReports.reduce((sum, report) => sum + report.turnover, 0);
-  const totalCommission = machineReports.reduce((sum, report) => sum + report.commission, 0);
 
   return (
     <div className="space-y-6">
@@ -229,6 +298,7 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
         </CardHeader>
         <CardContent className="p-6">
           <div className="space-y-6">
+            {/* Venue Selection */}
             <div>
               <Label className="text-blue-700 font-semibold">Select Venue *</Label>
               <Select value={selectedVenue} onValueChange={setSelectedVenue}>
@@ -273,6 +343,7 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
               )}
             </div>
 
+            {/* Date Range */}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="startDate" className="text-blue-700 font-semibold">Start Date *</Label>
@@ -284,6 +355,9 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
                   className="border-blue-200 focus:border-blue-500"
                   required
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Will include machine reports from this date onwards
+                </p>
               </div>
               <div>
                 <Label htmlFor="endDate" className="text-blue-700 font-semibold">End Date *</Label>
@@ -295,83 +369,125 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
                   className="border-blue-200 focus:border-blue-500"
                   required
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Will include machine reports up to this date
+                </p>
               </div>
             </div>
 
-            {/* Machine Turnover Inputs */}
-            {selectedVenue && machineReports.length > 0 && (
+            {/* Analysis Status */}
+            {analyzing && (
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Calculator className="h-5 w-5 animate-spin text-yellow-600" />
+                  <span className="font-medium text-yellow-800">Analyzing venue data...</span>
+                  <span className="text-sm text-yellow-700">
+                    Checking machine reports from {dateRange.start} to {dateRange.end}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Report Preview */}
+            {reportData && !analyzing && (
               <Card className="border-green-200 bg-green-50">
                 <CardHeader>
-                  <CardTitle className="text-green-800">Machine Turnover Details</CardTitle>
+                  <CardTitle className="text-green-800 flex items-center gap-2">
+                    <FileCheck className="h-5 w-5" />
+                    Report Preview - {reportData.venue.name}
+                  </CardTitle>
+                  <p className="text-sm text-green-700">
+                    Data from machine reports between {reportData.dateRange.start} and {reportData.dateRange.end}
+                  </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {machineReports.map((report) => (
-                    <div key={report.machine_id} className="grid grid-cols-4 gap-4 p-4 bg-white rounded-lg border">
-                      <div>
-                        <Label className="font-medium">{report.machine_name}</Label>
-                      </div>
-                      <div>
-                        <Label className="text-sm">Turnover ($)</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={report.turnover || ''}
-                          onChange={(e) => {
-                            const turnover = parseFloat(e.target.value) || 0;
-                            updateMachineReport(report.machine_id, 'turnover', turnover);
-                            calculateCommission(report.machine_id, turnover);
-                          }}
-                          placeholder="0.00"
-                          className="border-green-200"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-sm">Tokens</Label>
-                        <Input
-                          type="number"
-                          min="0"
-                          value={report.tokens || ''}
-                          onChange={(e) => updateMachineReport(report.machine_id, 'tokens', parseInt(e.target.value) || 0)}
-                          placeholder="0"
-                          className="border-green-200"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-sm">Commission</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={report.commission.toFixed(2)}
-                          readOnly
-                          className="bg-gray-100 border-gray-300"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                  
-                  {/* Summary */}
-                  <div className="grid grid-cols-3 gap-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  {/* Summary Stats */}
+                  <div className="grid grid-cols-4 gap-4 p-4 bg-white rounded-lg border">
                     <div className="text-center">
-                      <div className="text-lg font-bold text-blue-600">${totalTurnover.toFixed(2)}</div>
-                      <div className="text-sm text-blue-700">Total Turnover</div>
+                      <div className="text-2xl font-bold text-green-600">
+                        ${reportData.totalRevenue.toFixed(2)}
+                      </div>
+                      <div className="text-sm text-green-700">Total Revenue</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-lg font-bold text-green-600">${totalCommission.toFixed(2)}</div>
-                      <div className="text-sm text-green-700">Total Commission</div>
+                      <div className="text-2xl font-bold text-blue-600">
+                        ${reportData.totalCommission.toFixed(2)}
+                      </div>
+                      <div className="text-sm text-blue-700">Commission ({reportData.venue.commission_percentage}%)</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-lg font-bold text-purple-600">{selectedVenueData?.commission_percentage}%</div>
-                      <div className="text-sm text-purple-700">Commission Rate</div>
+                      <div className="text-2xl font-bold text-purple-600">
+                        {reportData.totalTokens}
+                      </div>
+                      <div className="text-sm text-purple-700">Total Tokens</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-orange-600">
+                        {reportData.machinesWithData}/{reportData.totalMachines}
+                      </div>
+                      <div className="text-sm text-orange-700">Machines with Data</div>
                     </div>
                   </div>
+
+                  {/* Machine Breakdown */}
+                  <div>
+                    <h4 className="font-semibold text-green-800 mb-3">
+                      Machine Performance Breakdown ({reportData.dateRange.start} to {reportData.dateRange.end})
+                    </h4>
+                    <div className="space-y-2">
+                      {reportData.machineReports.map((machine) => (
+                        <div key={machine.machine_id} className="grid grid-cols-5 gap-4 p-3 bg-white rounded border text-sm">
+                          <div>
+                            <div className="font-medium">{machine.machine_name}</div>
+                            <div className="text-gray-500 text-xs">SN: {machine.machine_serial}</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="font-medium">${machine.total_turnover.toFixed(2)}</div>
+                            <div className="text-gray-500 text-xs">Turnover</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="font-medium">{machine.total_tokens}</div>
+                            <div className="text-gray-500 text-xs">Tokens</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="font-medium">${machine.commission_amount.toFixed(2)}</div>
+                            <div className="text-gray-500 text-xs">Commission</div>
+                          </div>
+                          <div className="text-center">
+                            {machine.has_data ? (
+                              <Badge variant="default" className="text-xs">
+                                {machine.report_count} reports
+                              </Badge>
+                            ) : (
+                              <Badge variant="destructive" className="text-xs">
+                                No reports
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Warnings */}
+                  {reportData.machinesWithData < reportData.totalMachines && (
+                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                        <span className="font-medium text-yellow-800">
+                          Warning: {reportData.totalMachines - reportData.machinesWithData} machines have no reports between {reportData.dateRange.start} and {reportData.dateRange.end}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
 
+            {/* Generate Button */}
             <Button 
               onClick={generateVenueReport}
-              disabled={loading || !selectedVenue || !dateRange.start || !dateRange.end || totalTurnover === 0} 
+              disabled={loading || !reportData || reportData.totalRevenue === 0} 
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 text-lg"
             >
               <Building2 className="h-5 w-5 mr-2" />
@@ -379,54 +495,18 @@ const VenueReportGenerator: React.FC<VenueReportGeneratorProps> = ({ onBack }) =
             </Button>
 
             <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg">
-              <h4 className="font-medium mb-2">Report includes:</h4>
+              <h4 className="font-medium mb-2">📊 How Date Filtering Works:</h4>
               <ul className="list-disc list-inside space-y-1">
-                <li>Total revenue from all machines in the venue</li>
-                <li>Commission calculation based on venue percentage</li>
-                <li>Individual machine performance breakdown</li>
-                <li>Token count and payment status tracking</li>
-                <li>Professional PDF format for printing and records</li>
+                <li><strong>Data Source:</strong> Machine reports with individual report_date fields</li>
+                <li><strong>Filter Logic:</strong> WHERE report_date &gt;= start_date AND report_date &lt;= end_date</li>
+                <li><strong>Aggregation:</strong> Sums money_collected and tokens_in_game for each machine</li>
+                <li><strong>Commission:</strong> Applied to total revenue from all filtered reports</li>
+                <li><strong>Crystal Clear:</strong> Shows which machines have reports vs. no data in the date range</li>
               </ul>
             </div>
           </div>
         </CardContent>
       </Card>
-
-      {reportData && (
-        <Card className="border-green-200 bg-green-50">
-          <CardHeader>
-            <CardTitle className="text-green-800">Report Generated Successfully</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-4 gap-4 text-center">
-              <div>
-                <div className="text-2xl font-bold text-green-600">
-                  ${reportData.totalRevenue.toFixed(2)}
-                </div>
-                <div className="text-sm text-green-700">Total Revenue</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-blue-600">
-                  ${reportData.venueCommissionAmount.toFixed(2)}
-                </div>
-                <div className="text-sm text-blue-700">Venue Commission</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-purple-600">
-                  {reportData.totalReports}
-                </div>
-                <div className="text-sm text-purple-700">Machines Reported</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-orange-600">
-                  {reportData.machines.length}
-                </div>
-                <div className="text-sm text-orange-700">Total Machines</div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 };

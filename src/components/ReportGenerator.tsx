@@ -10,8 +10,7 @@ import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { Calculator, ArrowLeft, FileText, Building2 } from 'lucide-react';
 import MachineSelectInput from '@/components/MachineSelectInput';
-import VenueReportTemplate from '@/components/VenueReportTemplate';
-import ReportGeneratorPart2 from '@/components/ReportGeneratorPart2';
+import { VenueReportTemplate, type MachineReportData } from '@/components/VenueReportTemplate';
 
 interface ReportGeneratorProps {
   restrictedMode?: 'maintenance_only' | 'manager';
@@ -30,7 +29,10 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ restrictedMode }) => 
   const [loading, setLoading] = useState(false);
   const [lastMeterReading, setLastMeterReading] = useState(0);
   const [calculatedToysDispensed, setCalculatedToysDispensed] = useState(0);
-  const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [dateRange, setDateRange] = useState({ 
+    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    end: new Date().toISOString().split('T')[0]
+  });
 
   useEffect(() => {
     if (selectedMachine) {
@@ -139,37 +141,113 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ restrictedMode }) => 
       const venue = venues.find(v => v.id === selectedVenue);
       if (!venue) throw new Error('Venue not found');
 
+      console.log('📊 Generating venue report for:', venue.name);
+
+      // Get machines for this venue
       const venueMachines = machines.filter(m => m.venue_id === selectedVenue);
       
-      const { data: reports, error } = await supabase
+      if (venueMachines.length === 0) {
+        toast({
+          title: 'Error',
+          description: 'This venue has no machines assigned to it.',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      // Fetch machine reports for the date range
+      const { data: machineReports, error } = await supabase
         .from('machine_reports')
         .select('*')
         .in('machine_id', venueMachines.map(m => m.id))
         .gte('report_date', dateRange.start)
-        .lte('report_date', dateRange.end)
-        .order('report_date', { ascending: false });
+        .lte('report_date', dateRange.end);
 
       if (error) throw error;
 
+      console.log('📊 Found machine reports:', machineReports?.length || 0);
+
+      // Aggregate data by machine
+      const machineReportSummaries: MachineReportData[] = venueMachines.map(machine => {
+        const reportsForMachine = machineReports?.filter(r => r.machine_id === machine.id) || [];
+        
+        const totalTurnover = reportsForMachine.reduce((sum, report) => sum + (report.money_collected || 0), 0);
+        const totalTokens = reportsForMachine.reduce((sum, report) => sum + (report.tokens_in_game || 0), 0);
+        const commissionAmount = totalTurnover * (venue.commission_percentage / 100);
+
+        return {
+          machine_id: machine.id,
+          machine_name: machine.name,
+          machine_serial: machine.serial_number || 'N/A',
+          total_turnover: totalTurnover,
+          total_tokens: totalTokens,
+          commission_amount: commissionAmount,
+          report_count: reportsForMachine.length,
+          has_data: reportsForMachine.length > 0
+        };
+      });
+
+      const totalRevenue = machineReportSummaries.reduce((sum, m) => sum + m.total_turnover, 0);
+      
+      if (totalRevenue === 0) {
+        toast({
+          title: 'No Data Found',
+          description: 'No machine reports found for this venue in the selected date range. Please ensure machine reports exist for this period.',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      // Generate the report using the new template
       const reportTemplate = VenueReportTemplate({
         venue,
         machines: venueMachines,
-        reports: reports || [],
+        machineReports: machineReportSummaries,
+        reports: [], // Using new system
         dateRange,
         companyLogo
       });
 
-      const printWindow = window.open('', '_blank');
+      const htmlContent = reportTemplate.generateHTML();
+
+      // Open in new window
+      const printWindow = window.open('', '_blank', 'width=1200,height=800');
       if (printWindow) {
-        printWindow.document.write(reportTemplate.generateHTML());
+        printWindow.document.write(htmlContent);
         printWindow.document.close();
-        setTimeout(() => printWindow.print(), 500);
+        setTimeout(() => printWindow.print(), 1000);
       }
 
-      toast({ title: 'Success', description: 'Venue report generated successfully!' });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      toast({ title: 'Error', description: `Failed to generate venue report: ${errorMessage}`, variant: 'destructive' });
+      // Save to database
+      const venueReportData = {
+        venue_id: venue.id,
+        venue_name: venue.name,
+        venue_address: venue.address || '',
+        total_revenue: totalRevenue,
+        venue_commission_percentage: venue.commission_percentage,
+        venue_commission_amount: totalRevenue * (venue.commission_percentage / 100),
+        total_machines: venueMachines.length,
+        total_reports: machineReportSummaries.reduce((sum, m) => sum + m.report_count, 0),
+        date_range_start: dateRange.start,
+        date_range_end: dateRange.end,
+        report_date: new Date().toISOString().split('T')[0],
+        paid_status: false,
+        machine_data: JSON.stringify(machineReportSummaries)
+      };
+
+      await supabase.from('venue_reports').insert([venueReportData]);
+
+      toast({ 
+        title: 'Success', 
+        description: `Venue report generated! Revenue: ${totalRevenue.toFixed(2)}, Commission: ${(totalRevenue * (venue.commission_percentage / 100)).toFixed(2)}` 
+      });
+
+    } catch (error: any) {
+      toast({ 
+        title: 'Error', 
+        description: error.message || 'Failed to generate venue report', 
+        variant: 'destructive' 
+      });
     } finally {
       setLoading(false);
     }
@@ -316,15 +394,69 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ restrictedMode }) => 
             )}
 
             {reportType === 'venue' && (
-              <ReportGeneratorPart2
-                venues={venues}
-                selectedVenue={selectedVenue}
-                setSelectedVenue={setSelectedVenue}
-                dateRange={dateRange}
-                setDateRange={setDateRange}
-                generateVenueReport={generateVenueReport}
-                loading={loading}
-              />
+              <div className="space-y-6">
+                <div>
+                  <Label className="text-red-700 font-semibold">Select Venue *</Label>
+                  <Select value={selectedVenue} onValueChange={setSelectedVenue}>
+                    <SelectTrigger className="border-red-200">
+                      <SelectValue placeholder="Choose a venue" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {venues.map(venue => (
+                        <SelectItem key={venue.id} value={venue.id}>
+                          {venue.name} - {venue.commission_percentage}% commission
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="startDate" className="text-red-700 font-semibold">Start Date *</Label>
+                    <Input 
+                      id="startDate"
+                      type="date" 
+                      value={dateRange.start} 
+                      onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                      className="border-red-200 focus:border-red-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="endDate" className="text-red-700 font-semibold">End Date *</Label>
+                    <Input 
+                      id="endDate"
+                      type="date" 
+                      value={dateRange.end} 
+                      onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                      className="border-red-200 focus:border-red-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <Button 
+                  onClick={generateVenueReport}
+                  disabled={loading} 
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 text-lg"
+                >
+                  <Building2 className="h-5 w-5 mr-2" />
+                  {loading ? 'Generating Venue Report...' : 'Generate Venue Report'}
+                </Button>
+
+                <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg">
+                  <h4 className="font-medium mb-2">📊 How Venue Reports Work:</h4>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li><strong>Data Source:</strong> Pulls from machine reports in the selected date range</li>
+                    <li><strong>Revenue Calculation:</strong> Sums all machine turnover for the venue</li>
+                    <li><strong>Commission:</strong> Applies venue commission percentage to total revenue</li>
+                    <li><strong>Machine Breakdown:</strong> Shows individual machine performance with clear data</li>
+                    <li><strong>Crystal Clear:</strong> Every dollar is accounted for and clearly displayed</li>
+                    <li><strong>Data Validation:</strong> Shows which machines have reports vs. no data</li>
+                  </ul>
+                </div>
+              </div>
             )}
           </div>
         </CardContent>

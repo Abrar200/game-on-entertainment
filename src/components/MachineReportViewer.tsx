@@ -38,23 +38,81 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
   const updatePaidStatus = async (newStatus: boolean) => {
     setUpdating(true);
     try {
-      const { error } = await supabase
+      console.log('📝 Updating paid status for report:', report.id, 'to:', newStatus);
+      
+      // First check if the record exists
+      const { data: existingReport, error: checkError } = await supabase
         .from('machine_reports')
-        .update({ paid_status: newStatus })
-        .eq('id', report.id);
+        .select('id, paid_status')
+        .eq('id', report.id)
+        .single();
 
-      if (error) throw error;
+      if (checkError) {
+        console.error('❌ Error checking report exists:', checkError);
+        throw new Error(`Report not found: ${checkError.message}`);
+      }
+
+      if (!existingReport) {
+        throw new Error('Report not found in database');
+      }
+
+      console.log('✅ Report exists, current paid_status:', existingReport.paid_status);
+
+      // Update the paid status
+      const { data, error } = await supabase
+        .from('machine_reports')
+        .update({ 
+          paid_status: newStatus,
+          updated_at: new Date().toISOString() // Add timestamp if column exists
+        })
+        .eq('id', report.id)
+        .select();
+
+      if (error) {
+        console.error('❌ Database update error:', error);
+        
+        // Provide specific error messages based on error code
+        let errorMessage = 'Failed to update payment status';
+        
+        if (error.code === '42703') {
+          errorMessage = 'Database schema error: paid_status column missing. Please add it to machine_reports table.';
+        } else if (error.code === '23502') {
+          errorMessage = 'Database constraint error: Required field missing.';
+        } else if (error.code === 'PGRST116') {
+          errorMessage = 'Report not found or access denied.';
+        } else if (error.message) {
+          errorMessage = `Database error: ${error.message}`;
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      console.log('✅ Paid status updated successfully:', data);
 
       setPaidStatus(newStatus);
       toast({
         title: 'Success',
         description: `Report marked as ${newStatus ? 'paid' : 'unpaid'}`,
       });
-    } catch (error) {
-      console.error('Error updating paid status:', error);
+    } catch (error: any) {
+      console.error('❌ Error updating paid status:', error);
+      
+      // More detailed error handling
+      let userMessage = 'Failed to update payment status';
+      
+      if (error.message.includes('paid_status column missing')) {
+        userMessage = 'Database configuration error. Please contact your system administrator.';
+      } else if (error.message.includes('not found')) {
+        userMessage = 'This report no longer exists in the database.';
+      } else if (error.message.includes('access denied')) {
+        userMessage = 'You do not have permission to update this report.';
+      } else if (error.message) {
+        userMessage = error.message;
+      }
+      
       toast({
         title: 'Error',
-        description: 'Failed to update payment status',
+        description: userMessage,
         variant: 'destructive',
       });
     } finally {
@@ -245,7 +303,7 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
         <div class="metrics-list">
           <div class="metric-item">
             <span class="metric-label">Total Cash / Paywave in Machine:</span>
-            <span class="metric-value">$${totalCashPaywave.toFixed(2)}</span>
+            <span class="metric-value">${totalCashPaywave.toFixed(2)}</span>
           </div>
           
           <div class="metric-item">
@@ -255,7 +313,7 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
           
           <div class="metric-item">
             <span class="metric-label">Total Game Revenue:</span>
-            <span class="metric-value">$${totalGameRevenue.toFixed(2)}</span>
+            <span class="metric-value">${totalGameRevenue.toFixed(2)}</span>
           </div>
           
           <div class="metric-item">
@@ -265,7 +323,7 @@ const MachineReportViewer: React.FC<Props> = ({ report, venue }) => {
           
           <div class="metric-item">
             <span class="metric-label">Venue Commission Amount:</span>
-            <span class="metric-value">$${venueCommissionAmount.toFixed(2)}</span>
+            <span class="metric-value">${venueCommissionAmount.toFixed(2)}</span>
           </div>
         </div>
         

@@ -122,8 +122,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         loading: false
       });
 
-      // Calculate business health
-      calculateBusinessHealth({
+      // Calculate business health (now async)
+      await calculateBusinessHealth({
         machineUptime,
         lowStockAlerts,
         pendingIssues,
@@ -137,7 +137,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }
   };
 
-  const calculateBusinessHealth = (stats: {
+  const calculateBusinessHealth = async (stats: {
     machineUptime: number;
     lowStockAlerts: number;
     pendingIssues: number;
@@ -147,6 +147,52 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     let score = 100;
     const issues: string[] = [];
     const improvements: string[] = [];
+
+    // Get count of active (non-dismissed) machine problem alerts
+    let activeMachineProblems = 0;
+    try {
+      // Try to get dismissed alerts from database
+      const { data: dismissedAlerts, error } = await supabase
+        .from('machine_problems')
+        .select('machine_id, problem_type')
+        .not('dismissed_at', 'is', null);
+
+      if (error && error.code !== 'PGRST116') {
+        console.warn('Could not load dismissed alerts:', error);
+      }
+
+      // Count machine problems (high parts usage) that aren't dismissed
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+
+      const { data: machinePartsData } = await supabase
+        .from('machine_parts')
+        .select('machine_id, quantity')
+        .gte('created_at', twelveMonthsAgo.toISOString());
+
+      if (machinePartsData) {
+        const machineUsageMap = new Map<string, number>();
+        machinePartsData.forEach((part: any) => {
+          const current = machineUsageMap.get(part.machine_id) || 0;
+          machineUsageMap.set(part.machine_id, current + part.quantity);
+        });
+
+        // Count machines with 3+ parts that aren't dismissed
+        const dismissedSet = new Set(
+          dismissedAlerts?.map(d => `${d.machine_id}_parts_usage`) || []
+        );
+
+        machineUsageMap.forEach((partCount, machineId) => {
+          if (partCount >= 3 && !dismissedSet.has(`${machineId}_parts_usage`)) {
+            activeMachineProblems++;
+          }
+        });
+      }
+    } catch (error) {
+      console.warn('Error calculating machine problems for health score:', error);
+      // Fallback to estimating based on machines needing maintenance
+      activeMachineProblems = machines.filter(m => m.status === 'maintenance').length;
+    }
 
     // Machine uptime impact (30% of score)
     if (stats.machineUptime < 90) {
@@ -162,16 +208,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       improvements.push('Restock low inventory items');
     }
 
-    // Pending issues impact (20% of score)
+    // Active machine problems impact (20% of score) - only count non-dismissed alerts
+    if (activeMachineProblems > 0) {
+      score -= Math.min(activeMachineProblems * 5, 20);
+      issues.push(`${activeMachineProblems} machines with high maintenance needs`);
+      improvements.push('Address machine problems or schedule maintenance');
+    }
+
+    // Pending issues impact (15% of score)
     if (stats.pendingIssues > 0) {
-      score -= Math.min(stats.pendingIssues * 4, 20);
-      issues.push(`${stats.pendingIssues} pending maintenance issues`);
+      score -= Math.min(stats.pendingIssues * 3, 15);
+      issues.push(`${stats.pendingIssues} pending maintenance jobs`);
       improvements.push('Complete pending maintenance jobs');
     }
 
-    // Payout optimization (15% of score)
-    if (stats.averagePayout > 30 || stats.averagePayout < 10) {
-      score -= 15;
+    // Payout optimization (10% of score)
+    if (stats.averagePayout > 30 || (stats.averagePayout > 0 && stats.averagePayout < 10)) {
+      score -= 10;
       if (stats.averagePayout > 30) {
         issues.push('Average payout too high (>30%)');
         improvements.push('Adjust prize costs or claw settings');
@@ -181,11 +234,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       }
     }
 
-    // Revenue growth impact (10% of score)
-    if (stats.revenueGrowth < 0) {
-      score -= Math.min(Math.abs(stats.revenueGrowth) * 0.5, 10);
-      issues.push('Revenue declining');
-      improvements.push('Analyze underperforming machines');
+    // Revenue growth impact (5% of score)
+    if (stats.revenueGrowth < -10) {
+      score -= Math.min(Math.abs(stats.revenueGrowth) * 0.3, 5);
+      issues.push('Revenue declining significantly');
+      improvements.push('Analyze underperforming machines and venues');
     }
 
     score = Math.max(0, Math.min(100, score));
@@ -231,14 +284,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }
   };
 
+  // FIXED: Always use white background regardless of status
   const getHealthBackground = (status: BusinessHealth['status']) => {
-    switch (status) {
-      case 'excellent': return 'bg-green-50 border-green-200';
-      case 'good': return 'bg-blue-50 border-blue-200';
-      case 'warning': return 'bg-yellow-50 border-yellow-200';
-      case 'critical': return 'bg-red-50 border-red-200';
-      default: return 'bg-gray-50 border-gray-200';
-    }
+    return 'bg-white border-gray-200';
   };
 
   // Calculate basic stats
@@ -262,7 +310,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         </div>
       </div>
 
-      {/* Business Health Score */}
+      {/* Business Health Score - FIXED: White background always */}
       <Card className={`${getHealthBackground(businessHealth.status)} border-2`}>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">

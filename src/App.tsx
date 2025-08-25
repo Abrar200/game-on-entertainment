@@ -1,4 +1,4 @@
-// App.tsx - FIXED VERSION to prevent loading loops
+// App.tsx - OPTIMIZED VERSION for faster loading
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -38,7 +38,7 @@ const AppContent = () => {
   const [appReady, setAppReady] = useState(false);
   const initializationStarted = useRef(false);
 
-  // CRITICAL: Simplified app initialization without cache manipulation
+  // OPTIMIZED: Faster app initialization
   useEffect(() => {
     if (initializationStarted.current) {
       return;
@@ -50,22 +50,21 @@ const AppContent = () => {
       try {
         console.log('🚀 Initializing app...');
         
-        // Simple delay to ensure auth is ready
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // OPTIMIZED: Minimal delay, just ensure DOM is ready
+        await new Promise(resolve => setTimeout(resolve, 50));
         
         setAppReady(true);
         console.log('✅ App initialized');
         
       } catch (error) {
         console.error('❌ App initialization error:', error);
-        setAppReady(true); // Still show the app even if init fails
+        setAppReady(true);
       }
     };
 
     initializeApp();
   }, []);
 
-  // Enhanced login handler with better error handling
   const handleLogin = async (email: string, password: string): Promise<boolean> => {
     try {
       console.log('🔐 App: Login attempt for:', email);
@@ -85,7 +84,6 @@ const AppContent = () => {
     }
   };
 
-  // Enhanced logout handler
   const handleLogout = async (): Promise<void> => {
     try {
       console.log('👋 App: Logout initiated');
@@ -97,12 +95,12 @@ const AppContent = () => {
     }
   };
 
-  // CRITICAL: Better loading state management
+  // OPTIMIZED: Simplified state management
   const shouldShowLoading = !appReady || loading;
-  const shouldShowLogin = appReady && !loading && (!isAuthenticated || !userProfile);
-  const shouldShowMainApp = appReady && !loading && isAuthenticated && userProfile;
+  const shouldShowLogin = appReady && !loading && !isAuthenticated;
+  const shouldShowMainApp = appReady && !loading && isAuthenticated;
 
-  // Debug logging
+  // Debug logging (simplified)
   console.log('🔍 App render state:', {
     appReady,
     loading,
@@ -138,7 +136,7 @@ const AppContent = () => {
 
   // Show main app
   if (shouldShowMainApp) {
-    console.log('🏠 App: Showing main app for user:', userProfile.email);
+    console.log('🏠 App: Showing main app for user:', userProfile?.email);
     
     return (
       <AppProvider>

@@ -100,13 +100,13 @@ export const useAuth = () => {
     console.log('✅ Auth state cleared completely');
   }, []);
 
-  // FIXED: Simplified and more reliable profile fetching
+  // FIXED: More aggressive and faster profile fetching
   const fetchUserProfile = useCallback(async (userId: string, attempt: number = 1): Promise<UserProfile | null> => {
     try {
       console.log(`🔍 Fetching user profile (attempt ${attempt}/2) for:`, userId);
       
-      // First, try user_profiles table with a shorter timeout
-      console.log(`🗄️ Querying 'user_profiles' table...`);
+      // FIXED: Try both queries simultaneously to avoid sequential timeouts
+      console.log(`🗄️ Querying both tables simultaneously...`);
       
       const profilePromise = supabase
         .from('user_profiles')
@@ -114,68 +114,55 @@ export const useAuth = () => {
         .eq('user_id', userId)
         .single();
 
-      // Add a 5-second timeout for this specific query
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Profile query timeout')), 5000);
-      });
+      const usersPromise = supabase
+        .from('users')
+        .select('id, email, username, full_name, role, is_active, created_at')
+        .eq('id', userId)
+        .single();
 
-      let profileResult;
-      try {
-        profileResult = await Promise.race([profilePromise, timeoutPromise]);
-      } catch (timeoutError) {
-        console.warn('⚠️ user_profiles query timed out, trying users table...');
-        profileResult = { data: null, error: { code: 'TIMEOUT' } };
-      }
+      // Run both queries in parallel with a 3-second timeout each
+      const [profileResult, usersResult] = await Promise.allSettled([
+        Promise.race([
+          profilePromise,
+          new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error('user_profiles timeout')), 3000)
+          )
+        ]),
+        Promise.race([
+          usersPromise,
+          new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error('users timeout')), 3000)
+          )
+        ])
+      ]);
 
-      let { data, error } = profileResult;
-
-      // If not found or timeout, try users table
-      if (error?.code === 'PGRST116' || error?.code === 'TIMEOUT' || !data) {
-        console.log(`🗄️ Trying 'users' table as fallback...`);
-        
-        const usersPromise = supabase
-          .from('users')
-          .select('id, email, username, full_name, role, is_active, created_at')
-          .eq('id', userId)
-          .single();
-
-        const usersTimeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('Users query timeout')), 5000);
-        });
-
-        try {
-          const usersResult = await Promise.race([usersPromise, usersTimeoutPromise]);
-          data = usersResult.data;
-          error = usersResult.error;
-        } catch (usersTimeoutError) {
-          console.error('❌ Both profile queries timed out');
-          throw new Error('Database queries timed out');
-        }
-      }
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('❌ Profile fetch error:', error);
-        
-        // Only retry once on network/temporary errors
-        if (attempt < 2 && !error.message?.includes('timeout')) {
-          console.log(`🔄 Retrying profile fetch...`);
-          
-          return new Promise((resolve) => {
-            const timeout = setTimeout(() => {
-              retryTimeouts.current.delete(timeout);
-              resolve(fetchUserProfile(userId, attempt + 1));
-            }, 1000);
-            retryTimeouts.current.add(timeout);
-          });
-        }
-        
-        throw error;
-      }
-
-      if (data) {
-        // Normalize the data structure
+      // Check user_profiles result first
+      if (profileResult.status === 'fulfilled' && profileResult.value?.data) {
+        const data = profileResult.value.data;
         const profile = {
           id: data.user_id || data.id,
+          email: data.email || '', // Handle missing email
+          username: data.username,
+          full_name: data.full_name,
+          role: data.role,
+          is_active: data.is_active,
+          created_at: data.created_at
+        };
+        
+        // Get email from users table if missing from user_profiles
+        if (!profile.email && usersResult.status === 'fulfilled' && usersResult.value?.data) {
+          profile.email = usersResult.value.data.email;
+        }
+        
+        console.log('✅ User profile fetched from user_profiles:', profile.email, 'Role:', profile.role);
+        return profile;
+      }
+
+      // Fall back to users table result
+      if (usersResult.status === 'fulfilled' && usersResult.value?.data) {
+        const data = usersResult.value.data;
+        const profile = {
+          id: data.id,
           email: data.email,
           username: data.username,
           full_name: data.full_name,
@@ -184,27 +171,49 @@ export const useAuth = () => {
           created_at: data.created_at
         };
         
-        console.log('✅ User profile fetched successfully:', profile.email, 'Role:', profile.role);
+        console.log('✅ User profile fetched from users table:', profile.email, 'Role:', profile.role);
         return profile;
       }
 
-      console.log('ℹ️ No user profile data found for:', userId);
+      // Check for specific errors
+      const profileError = profileResult.status === 'rejected' ? profileResult.reason : null;
+      const usersError = usersResult.status === 'rejected' ? usersResult.reason : null;
+
+      console.log('⚠️ Profile fetch results:', {
+        profileStatus: profileResult.status,
+        usersStatus: usersResult.status,
+        profileError: profileError?.message,
+        usersError: usersError?.message
+      });
+
+      // Only retry on network errors, not on "not found" errors
+      const shouldRetry = attempt < 2 && (
+        (profileError && !profileError.message?.includes('timeout') && profileError.code !== 'PGRST116') ||
+        (usersError && !usersError.message?.includes('timeout') && usersError.code !== 'PGRST116')
+      );
+
+      if (shouldRetry) {
+        console.log(`🔄 Retrying profile fetch (attempt ${attempt + 1})...`);
+        
+        return new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            retryTimeouts.current.delete(timeout);
+            resolve(fetchUserProfile(userId, attempt + 1));
+          }, 500); // Shorter retry delay
+          retryTimeouts.current.add(timeout);
+        });
+      }
+
+      console.log('ℹ️ No user profile found for:', userId);
       return null;
 
     } catch (error: any) {
       console.error('❌ Error in fetchUserProfile:', error);
-      
-      // Don't retry on certain errors
-      if (error.code === 'PGRST116' || error.message?.includes('JWT')) {
-        console.log('🚫 Not retrying due to specific error');
-        return null;
-      }
-      
       return null;
     }
   }, []);
 
-  // FIXED: Reduced timeout and better error handling
+  // FIXED: Remove timeout mechanism and make more robust
   const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false): Promise<void> => {
     const userId = session.user.id;
     
@@ -219,21 +228,8 @@ export const useAuth = () => {
     try {
       console.log('📱 Handling user session for:', session.user.email);
       
-      // FIXED: Reduced timeout to 8 seconds instead of 15
-      const sessionTimeout = setTimeout(() => {
-        console.error('❌ Session handling timeout - forcing completion');
-        isProcessingAuth.current = false;
-        setLoading(false);
-        
-        // Try to set basic auth state without profile
-        setSession(session);
-        setCurrentUser(session.user as AuthUser);
-        setIsAuthenticated(true);
-      }, 8000);
-      
+      // FIXED: Remove the timeout mechanism that was causing the fallback
       const profile = await fetchUserProfile(userId);
-      
-      clearTimeout(sessionTimeout);
       
       if (profile && profile.is_active) {
         setSession(session);
@@ -253,7 +249,6 @@ export const useAuth = () => {
         
       } else if (profile && !profile.is_active) {
         console.log('⛔ User account is inactive');
-        clearTimeout(sessionTimeout);
         await handleSignOut(true);
         toast({
           title: 'Account Inactive',
@@ -263,20 +258,22 @@ export const useAuth = () => {
         
       } else {
         console.log('❌ No profile found for user:', session.user.email, 'ID:', userId);
-        clearTimeout(sessionTimeout);
         
-        // FIXED: Instead of trying to create a profile, set basic auth state
-        console.log('🔧 Using fallback auth state - profile needs to be created by admin');
+        // FIXED: Set basic auth state immediately without showing profile missing error
+        console.log('🔧 Using fallback auth state - will retry profile fetch');
         setSession(session);
         setCurrentUser(session.user as AuthUser);
         setIsAuthenticated(true);
         setLoading(false);
         
-        toast({
-          title: 'Profile Missing',
-          description: 'Your user profile is incomplete. Please contact your administrator.',
-          variant: 'destructive'
-        });
+        // Don't show error toast for missing profile on page refresh
+        if (showWelcome) {
+          toast({
+            title: 'Profile Missing',
+            description: 'Your user profile is incomplete. Please contact your administrator.',
+            variant: 'destructive'
+          });
+        }
       }
       
     } catch (error) {
@@ -289,11 +286,13 @@ export const useAuth = () => {
       setIsAuthenticated(true);
       setLoading(false);
       
-      toast({
-        title: 'Authentication Warning',
-        description: 'Logged in with basic access. Some features may be limited.',
-        variant: 'destructive'
-      });
+      if (showWelcome) {
+        toast({
+          title: 'Authentication Warning',
+          description: 'Logged in with basic access. Some features may be limited.',
+          variant: 'destructive'
+        });
+      }
     } finally {
       isProcessingAuth.current = false;
       setLoading(false);

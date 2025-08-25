@@ -1,4 +1,4 @@
-// src/hooks/useAuth.tsx - FIXED VERSION to resolve profile fetch timeouts and infinite loops
+// src/hooks/useAuth.tsx - PRODUCTION OPTIMIZED VERSION
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -37,8 +37,8 @@ export const useAuth = () => {
   const retryTimeouts = useRef<Set<NodeJS.Timeout>>(new Set());
   const profileCache = useRef<Map<string, { profile: UserProfile | null, timestamp: number }>>(new Map());
 
-  // Cache TTL: 5 minutes
-  const CACHE_TTL = 5 * 60 * 1000;
+  // Cache TTL: 1 minute for production
+  const CACHE_TTL = 1 * 60 * 1000;
 
   useEffect(() => {
     return () => {
@@ -107,10 +107,12 @@ export const useAuth = () => {
     console.log('✅ Auth state cleared completely');
   }, []);
 
-  // FIXED: Environment-aware profile fetching with different strategies
+  // PRODUCTION OPTIMIZED: Faster profile fetching with shorter timeouts
   const fetchUserProfile = useCallback(async (userId: string, attempt: number = 1): Promise<UserProfile | null> => {
+    const isProduction = window.location.hostname !== 'localhost';
+    
     try {
-      console.log(`🔍 Fetching user profile (attempt ${attempt}/3) for:`, userId);
+      console.log(`🔍 Fetching user profile (attempt ${attempt}/2) for:`, userId);
       
       // Check cache first
       const cached = profileCache.current.get(userId);
@@ -119,20 +121,17 @@ export const useAuth = () => {
         return cached.profile;
       }
 
-      // Environment detection
-      const isProduction = process.env.NODE_ENV === 'production' || window.location.hostname !== 'localhost';
-      const timeoutDuration = isProduction ? 45000 : 15000; // Longer timeout for production
+      // MUCH SHORTER TIMEOUTS for production
+      const timeoutDuration = isProduction ? 8000 : 5000; // 8s for production, 5s for dev
 
-      // FIXED: Start with users table (more reliable) with environment-aware timeout
-      console.log(`🗄️ Querying 'users' table first (timeout: ${timeoutDuration}ms)...`);
+      console.log(`🗄️ Querying 'users' table (timeout: ${timeoutDuration}ms)...`);
       
       const usersPromise = supabase
         .from('users')
         .select('id, email, username, full_name, role, is_active, created_at')
         .eq('id', userId)
-        .maybeSingle(); // Use maybeSingle instead of single to avoid errors
+        .maybeSingle();
 
-      // Environment-aware timeout
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('Users query timeout')), timeoutDuration);
       });
@@ -141,43 +140,40 @@ export const useAuth = () => {
       try {
         result = await Promise.race([usersPromise, timeoutPromise]);
       } catch (timeoutError) {
-        console.warn(`⚠️ users table query timed out after ${timeoutDuration}ms, trying user_profiles...`);
+        console.warn(`⚠️ users table query timed out after ${timeoutDuration}ms`);
         
-        // Fallback to user_profiles table
-        const profilePromise = supabase
-          .from('user_profiles')
-          .select('*')
-          .eq('user_id', userId)
-          .maybeSingle();
+        // For production, try a much faster fallback
+        if (isProduction && attempt === 1) {
+          console.log('🚀 Production: Trying direct user_profiles query...');
+          const fastProfilePromise = supabase
+            .from('user_profiles')
+            .select('user_id, username, full_name, role, is_active, created_at')
+            .eq('user_id', userId)
+            .maybeSingle();
 
-        const profileTimeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('Profile query timeout')), timeoutDuration);
-        });
+          const fastTimeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('Fast profile query timeout')), 5000);
+          });
 
-        try {
-          result = await Promise.race([profilePromise, profileTimeoutPromise]);
-          // Transform user_profiles result to match users table structure
-          if (result.data) {
-            result.data = {
-              id: result.data.user_id,
-              email: result.data.email || '', // Handle missing email
-              username: result.data.username,
-              full_name: result.data.full_name,
-              role: result.data.role,
-              is_active: result.data.is_active,
-              created_at: result.data.created_at
-            };
+          try {
+            result = await Promise.race([fastProfilePromise, fastTimeoutPromise]);
+            if (result.data) {
+              result.data = {
+                id: result.data.user_id,
+                email: '', // Will be filled from session
+                username: result.data.username,
+                full_name: result.data.full_name,
+                role: result.data.role,
+                is_active: result.data.is_active,
+                created_at: result.data.created_at
+              };
+            }
+          } catch (fastError) {
+            console.warn('⚠️ Fast profile query also failed:', fastError);
+            throw new Error('All profile queries failed');
           }
-        } catch (profileTimeoutError) {
-          console.error(`❌ Both profile queries timed out after ${timeoutDuration}ms each`);
-          
-          // Final fallback: try to get minimal info from session
-          if (attempt === 1) {
-            console.log('🔄 Final attempt with session data fallback...');
-            return fetchUserProfile(userId, 2);
-          }
-          
-          throw new Error('All database queries timed out');
+        } else {
+          throw timeoutError;
         }
       }
 
@@ -187,17 +183,17 @@ export const useAuth = () => {
         console.error('❌ Profile fetch error:', error);
         
         // Only retry on network/temporary errors, not on auth or not-found errors
-        if (attempt < 3 && 
+        if (attempt < 2 && 
             !error.message?.includes('timeout') && 
             !error.message?.includes('JWT') && 
             !error.message?.includes('not authorized')) {
-          console.log(`🔄 Retrying profile fetch (attempt ${attempt + 1}/3)...`);
+          console.log(`🔄 Retrying profile fetch (attempt ${attempt + 1}/2)...`);
           
           return new Promise((resolve) => {
             const timeout = setTimeout(() => {
               retryTimeouts.current.delete(timeout);
               resolve(fetchUserProfile(userId, attempt + 1));
-            }, Math.min(1000 * attempt, 3000)); // Progressive backoff
+            }, Math.min(1000 * attempt, 2000)); // Shorter backoff
             retryTimeouts.current.add(timeout);
           });
         }
@@ -235,6 +231,12 @@ export const useAuth = () => {
     } catch (error: any) {
       console.error('❌ Error in fetchUserProfile:', error);
       
+      // For production, provide immediate fallback instead of retrying
+      if (window.location.hostname !== 'localhost') {
+        console.log('🏭 Production: Using immediate session fallback');
+        return null; // Will trigger the fallback in handleUserSession
+      }
+      
       // Don't retry on certain errors
       if (error.code === 'PGRST116' || 
           error.message?.includes('JWT') || 
@@ -249,9 +251,10 @@ export const useAuth = () => {
     }
   }, []);
 
-  // FIXED: More robust session handling with better state management
+  // PRODUCTION OPTIMIZED: Faster session handling
   const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false): Promise<void> => {
     const userId = session.user.id;
+    const isProduction = window.location.hostname !== 'localhost';
     
     // FIXED: Better duplicate processing prevention
     if (isProcessingAuth.current && currentUserId.current === userId) {
@@ -265,8 +268,26 @@ export const useAuth = () => {
     try {
       console.log('📱 Handling user session for:', session.user.email);
       
-      // FIXED: Removed aggressive timeout, let the fetch function handle its own timeouts
-      const profile = await fetchUserProfile(userId);
+      // PRODUCTION OPTIMIZATION: Shorter timeout for profile fetch
+      let profile: UserProfile | null = null;
+      
+      if (isProduction) {
+        // Production: Use a promise race with shorter timeout
+        const profilePromise = fetchUserProfile(userId);
+        const sessionTimeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Session handling timeout')), 10000);
+        });
+        
+        try {
+          profile = await Promise.race([profilePromise, sessionTimeoutPromise]);
+        } catch (timeoutError) {
+          console.warn('⚠️ Profile fetch timed out, using fallback');
+          profile = null;
+        }
+      } else {
+        // Development: Normal flow
+        profile = await fetchUserProfile(userId);
+      }
       
       if (profile && profile.is_active) {
         const enhancedUser: AuthUser = {

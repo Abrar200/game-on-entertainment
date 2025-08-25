@@ -1,0 +1,11 @@
+{
+    "env": {
+      "NEXT_PUBLIC_SUPABASE_URL": "https://ogbxiolnyzidylzoljuh.supabase.co",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nYnhpb2xueXppZHlsem9sanVoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM3MDk5MjAsImV4cCI6MjA2OTI4NTkyMH0._l43gP6A8jJQmkoQr11NavPovImxhG6SDHG8CE5tF0Q"
+    },
+    "functions": {
+      "runtime": "edge",
+      "maxDuration": 30
+    },
+    "regions": ["syd1"]
+  }

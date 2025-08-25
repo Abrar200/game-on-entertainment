@@ -1,4 +1,4 @@
-// App.tsx - OPTIMIZED VERSION for faster loading
+// App.tsx - PRODUCTION OPTIMIZED VERSION
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -14,6 +14,7 @@ import PayoutIssuesPage from "./pages/PayoutIssues";
 import EditingGuidePage from "./pages/EditingGuide";
 import NotFound from "./pages/NotFound";
 import { useEffect, useState, useRef } from "react";
+import { checkSupabaseConnection } from "@/lib/supabase";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,6 +24,28 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Function to wait for Supabase connection
+const waitForSupabaseConnection = async (maxAttempts = 3, delay = 1000): Promise<boolean> => {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { healthy } = await checkSupabaseConnection();
+      if (healthy) {
+        console.log(`✅ Supabase connection established on attempt ${attempt}`);
+        return true;
+      }
+    } catch (error) {
+      console.warn(`⚠️ Connection attempt ${attempt} failed:`, error);
+    }
+    
+    if (attempt < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  console.error('❌ Failed to establish Supabase connection');
+  return false;
+};
 
 const AppContent = () => {
   const { 
@@ -37,8 +60,9 @@ const AppContent = () => {
 
   const [appReady, setAppReady] = useState(false);
   const initializationStarted = useRef(false);
+  const isProduction = window.location.hostname !== 'localhost';
 
-  // OPTIMIZED: Faster app initialization
+  // CRITICAL: Production-optimized app initialization
   useEffect(() => {
     if (initializationStarted.current) {
       return;
@@ -50,21 +74,28 @@ const AppContent = () => {
       try {
         console.log('🚀 Initializing app...');
         
-        // OPTIMIZED: Minimal delay, just ensure DOM is ready
-        await new Promise(resolve => setTimeout(resolve, 50));
+        // Wait for Supabase connection in production
+        if (isProduction) {
+          console.log('🌐 Waiting for database connection...');
+          await waitForSupabaseConnection(3, 1000);
+        } else {
+          // Simple delay for development
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
         
         setAppReady(true);
         console.log('✅ App initialized');
         
       } catch (error) {
         console.error('❌ App initialization error:', error);
-        setAppReady(true);
+        setAppReady(true); // Still show the app even if init fails
       }
     };
 
     initializeApp();
-  }, []);
+  }, [isProduction]);
 
+  // Enhanced login handler with better error handling
   const handleLogin = async (email: string, password: string): Promise<boolean> => {
     try {
       console.log('🔐 App: Login attempt for:', email);
@@ -84,6 +115,7 @@ const AppContent = () => {
     }
   };
 
+  // Enhanced logout handler
   const handleLogout = async (): Promise<void> => {
     try {
       console.log('👋 App: Logout initiated');
@@ -95,12 +127,12 @@ const AppContent = () => {
     }
   };
 
-  // OPTIMIZED: Simplified state management
-  const shouldShowLoading = !appReady || loading;
-  const shouldShowLogin = appReady && !loading && !isAuthenticated;
-  const shouldShowMainApp = appReady && !loading && isAuthenticated;
+  // CRITICAL: Better loading state management
+  const shouldShowLoading = !appReady || (loading && !isProduction);
+  const shouldShowLogin = appReady && !loading && (!isAuthenticated || !userProfile);
+  const shouldShowMainApp = appReady && (isAuthenticated && userProfile);
 
-  // Debug logging (simplified)
+  // Debug logging
   console.log('🔍 App render state:', {
     appReady,
     loading,
@@ -108,10 +140,34 @@ const AppContent = () => {
     hasUserProfile: !!userProfile,
     shouldShowLoading,
     shouldShowLogin,
-    shouldShowMainApp
+    shouldShowMainApp,
+    isProduction
   });
 
-  // Show loading screen
+  // Show production-specific loading screen
+  if (shouldShowLoading && isProduction) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">
+            Connecting to database...
+          </p>
+          <p className="mt-2 text-sm text-gray-500">
+            This may take a moment on first load
+          </p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+          >
+            Retry Connection
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show regular loading screen
   if (shouldShowLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
@@ -147,7 +203,7 @@ const AppContent = () => {
               element={
                 <Index 
                   onLogout={handleLogout} 
-                  userProfile={userProfile}
+                  userProfile={userProfile!}
                   hasPermission={hasPermission}
                   canAccessView={canAccessView}
                 />
@@ -159,7 +215,7 @@ const AppContent = () => {
                 element={
                   <Reports 
                     onLogout={handleLogout}
-                    userProfile={userProfile}
+                    userProfile={userProfile!}
                     hasPermission={hasPermission}
                   />
                 } 
@@ -171,7 +227,7 @@ const AppContent = () => {
                 element={
                   <PayoutIssuesPage 
                     onLogout={handleLogout}
-                    userProfile={userProfile}
+                    userProfile={userProfile!}
                   />
                 } 
               />
@@ -181,7 +237,7 @@ const AppContent = () => {
               element={
                 <EditingGuidePage 
                   onLogout={handleLogout}
-                  userProfile={userProfile}
+                  userProfile={userProfile!}
                 />
               } 
             />

@@ -190,6 +190,7 @@ export const fetchUserProfileSafe = async (userId: string): Promise<any> => {
   }, 2, isProduction ? 60000 : 20000); // 1 minute timeout for production
 };
 
+
 // Connection health check (useful for debugging production issues)
 export const checkSupabaseConnection = async (): Promise<{ healthy: boolean, latency: number, error?: string }> => {
   const startTime = Date.now();

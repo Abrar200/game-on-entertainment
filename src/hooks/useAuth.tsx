@@ -109,29 +109,73 @@ export const useAuth = () => {
     console.log('✅ Auth state cleared completely');
   }, []);
 
-  // Enhanced profile fetching with timeout and better error handling
+  // Enhanced profile fetching with correct table name
   const fetchUserProfile = useCallback(async (userId: string, attempt: number = 1): Promise<UserProfile | null> => {
     try {
       console.log(`🔍 Fetching user profile (attempt ${attempt}/3) for:`, userId);
       
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Profile fetch timeout')), 10000); // 10 second timeout
-      });
+      // Try user_profiles table first (the correct one)
+      console.log(`🗄️ Querying 'user_profiles' table...`);
       
-      const fetchPromise = supabase
-        .from('users')
-        .select('id, email, username, full_name, role, is_active, created_at')
-        .eq('id', userId)
-        .maybeSingle();
-      
-      const { data, error } = await Promise.race([fetchPromise, timeoutPromise]);
+      let { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      // If not found in user_profiles, try users table as fallback
+      if (error?.code === 'PGRST116' || !data) {
+        console.log(`🗄️ Not found in user_profiles, trying 'users' table...`);
+        
+        const usersResult = await supabase
+          .from('users')
+          .select('id, email, username, full_name, role, is_active, created_at')
+          .eq('id', userId)
+          .single();
+        
+        data = usersResult.data;
+        error = usersResult.error;
+        
+        // If found in users table, create the missing user_profile
+        if (data && !error) {
+          console.log('🔧 Creating missing user_profile from users table data...');
+          try {
+            await supabase
+              .from('user_profiles')
+              .insert([{
+                user_id: data.id,
+                email: data.email,
+                username: data.username,
+                full_name: data.full_name,
+                role: data.role,
+                is_active: data.is_active
+              }]);
+            console.log('✅ Created missing user_profile');
+          } catch (createError) {
+            console.warn('⚠️ Could not create user_profile:', createError);
+          }
+        }
+      }
 
       if (error) {
         console.error('❌ Profile fetch error:', error);
         
-        // Only retry on network/temporary errors, not on missing data
-        if (attempt < 3 && error.code !== 'PGRST116' && !error.message.includes('timeout')) {
+        // Log the exact error details
+        console.error('❌ Error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        
+        // If it's a "not found" error, return null
+        if (error.code === 'PGRST116') {
+          console.log('ℹ️ User not found in either table');
+          return null;
+        }
+        
+        // Only retry on network/temporary errors
+        if (attempt < 3 && !error.message?.includes('timeout')) {
           console.log(`🔄 Retrying profile fetch (attempt ${attempt + 1})...`);
           
           return new Promise((resolve) => {
@@ -143,18 +187,23 @@ export const useAuth = () => {
           });
         }
         
-        // If it's a missing profile error, return null instead of throwing
-        if (error.code === 'PGRST116') {
-          console.log('ℹ️ No user profile found in database for:', userId);
-          return null;
-        }
-        
         throw error;
       }
 
       if (data) {
-        console.log('✅ User profile fetched successfully:', data.email, 'Role:', data.role);
-        return data;
+        // Normalize the data structure (handle both table formats)
+        const profile = {
+          id: data.user_id || data.id,
+          email: data.email,
+          username: data.username,
+          full_name: data.full_name,
+          role: data.role,
+          is_active: data.is_active,
+          created_at: data.created_at
+        };
+        
+        console.log('✅ User profile fetched successfully:', profile.email, 'Role:', profile.role);
+        return profile;
       }
 
       console.log('ℹ️ No user profile data returned for:', userId);
@@ -163,21 +212,10 @@ export const useAuth = () => {
     } catch (error: any) {
       console.error('❌ Error in fetchUserProfile:', error);
       
-      // Don't retry on auth errors or timeout errors
-      if (error.code === 'PGRST116' || error.message?.includes('JWT') || error.message?.includes('timeout')) {
-        console.log('🚫 Not retrying due to auth/timeout error');
+      // Don't retry on certain errors
+      if (error.code === 'PGRST116' || error.message?.includes('JWT')) {
+        console.log('🚫 Not retrying due to specific error');
         return null;
-      }
-      
-      // Only retry on genuine network errors
-      if (attempt < 3 && error.name === 'NetworkError') {
-        return new Promise((resolve) => {
-          const timeout = setTimeout(() => {
-            retryTimeouts.current.delete(timeout);
-            resolve(fetchUserProfile(userId, attempt + 1));
-          }, 1000 * attempt);
-          retryTimeouts.current.add(timeout);
-        });
       }
       
       return null;

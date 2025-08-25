@@ -300,6 +300,22 @@ export const useAuth = () => {
     isInitialized.current = true;
     console.log('🔐 Initializing auth system...');
 
+    // Clear cross-domain auth conflicts on development
+    if (window.location.hostname === 'localhost') {
+      console.log('🧹 Development mode: clearing potential auth conflicts...');
+      try {
+        // Only clear auth tokens, not all localStorage
+        Object.keys(localStorage).forEach(key => {
+          if (key.includes('supabase.auth') || key.includes('sb-')) {
+            localStorage.removeItem(key);
+            console.log('🗑️ Cleared dev auth key:', key);
+          }
+        });
+      } catch (error) {
+        console.warn('⚠️ Dev auth cleanup failed:', error);
+      }
+    }
+
     const initializeAuth = async () => {
       try {
         setLoading(true);

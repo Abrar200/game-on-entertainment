@@ -107,7 +107,7 @@ export const useAuth = () => {
     console.log('✅ Auth state cleared completely');
   }, []);
 
-  // FIXED: More robust and faster profile fetching with caching and proper error handling
+  // FIXED: Environment-aware profile fetching with different strategies
   const fetchUserProfile = useCallback(async (userId: string, attempt: number = 1): Promise<UserProfile | null> => {
     try {
       console.log(`🔍 Fetching user profile (attempt ${attempt}/3) for:`, userId);
@@ -119,8 +119,12 @@ export const useAuth = () => {
         return cached.profile;
       }
 
-      // FIXED: Start with users table (more reliable) with longer timeout
-      console.log(`🗄️ Querying 'users' table first...`);
+      // Environment detection
+      const isProduction = process.env.NODE_ENV === 'production' || window.location.hostname !== 'localhost';
+      const timeoutDuration = isProduction ? 45000 : 15000; // Longer timeout for production
+
+      // FIXED: Start with users table (more reliable) with environment-aware timeout
+      console.log(`🗄️ Querying 'users' table first (timeout: ${timeoutDuration}ms)...`);
       
       const usersPromise = supabase
         .from('users')
@@ -128,16 +132,16 @@ export const useAuth = () => {
         .eq('id', userId)
         .maybeSingle(); // Use maybeSingle instead of single to avoid errors
 
-      // FIXED: Increased timeout to 15 seconds for better reliability
+      // Environment-aware timeout
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Users query timeout')), 15000);
+        setTimeout(() => reject(new Error('Users query timeout')), timeoutDuration);
       });
 
       let result;
       try {
         result = await Promise.race([usersPromise, timeoutPromise]);
       } catch (timeoutError) {
-        console.warn('⚠️ users table query timed out, trying user_profiles...');
+        console.warn(`⚠️ users table query timed out after ${timeoutDuration}ms, trying user_profiles...`);
         
         // Fallback to user_profiles table
         const profilePromise = supabase
@@ -147,7 +151,7 @@ export const useAuth = () => {
           .maybeSingle();
 
         const profileTimeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('Profile query timeout')), 15000);
+          setTimeout(() => reject(new Error('Profile query timeout')), timeoutDuration);
         });
 
         try {
@@ -165,7 +169,7 @@ export const useAuth = () => {
             };
           }
         } catch (profileTimeoutError) {
-          console.error('❌ Both profile queries timed out');
+          console.error(`❌ Both profile queries timed out after ${timeoutDuration}ms each`);
           
           // Final fallback: try to get minimal info from session
           if (attempt === 1) {

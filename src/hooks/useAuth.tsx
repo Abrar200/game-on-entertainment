@@ -1,4 +1,4 @@
-// src/hooks/useAuth.tsx - FIXED VERSION to prevent loading loops
+// src/hooks/useAuth.tsx - FIXED VERSION to resolve profile fetch timeouts
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -31,13 +31,11 @@ export const useAuth = () => {
   const [session, setSession] = useState<Session | null>(null);
   const { toast } = useToast();
   
-  // CRITICAL: Prevent infinite loops and multiple initializations
   const isInitialized = useRef(false);
   const isProcessingAuth = useRef(false);
   const currentUserId = useRef<string | null>(null);
   const retryTimeouts = useRef<Set<NodeJS.Timeout>>(new Set());
 
-  // Clear all timeouts on unmount
   useEffect(() => {
     return () => {
       retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
@@ -48,27 +46,22 @@ export const useAuth = () => {
   const handleSignOut = useCallback(async (skipSupabaseSignOut: boolean = false): Promise<void> => {
     console.log('🧹 Clearing all auth state...');
     
-    // Clear processing flags
     isProcessingAuth.current = false;
     currentUserId.current = null;
     
-    // Clear all timeouts
     retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
     retryTimeouts.current.clear();
     
-    // Clear auth state
     setSession(null);
     setCurrentUser(null);
     setUserProfile(null);
     setIsAuthenticated(false);
     setLoading(false);
     
-    // Clear problematic cache while preserving auth tokens
     try {
       const keysToRemove: string[] = [];
       
       Object.keys(localStorage).forEach(key => {
-        // Preserve Supabase auth keys but remove other cache
         const shouldPreserve = key.includes('sb-') || key.includes('supabase.auth');
         
         if (!shouldPreserve && (
@@ -86,7 +79,6 @@ export const useAuth = () => {
         console.log('🗑️ Cleared cache:', key);
       });
       
-      // Clear sessionStorage (usually safe)
       try {
         sessionStorage.clear();
       } catch (e) {
@@ -97,7 +89,6 @@ export const useAuth = () => {
       console.warn('⚠️ Cache clearing failed:', error);
     }
     
-    // Sign out from Supabase if requested
     if (!skipSupabaseSignOut) {
       try {
         await supabase.auth.signOut();
@@ -109,80 +100,71 @@ export const useAuth = () => {
     console.log('✅ Auth state cleared completely');
   }, []);
 
-  // Enhanced profile fetching with correct table name
+  // FIXED: Simplified and more reliable profile fetching
   const fetchUserProfile = useCallback(async (userId: string, attempt: number = 1): Promise<UserProfile | null> => {
     try {
-      console.log(`🔍 Fetching user profile (attempt ${attempt}/3) for:`, userId);
+      console.log(`🔍 Fetching user profile (attempt ${attempt}/2) for:`, userId);
       
-      // Try user_profiles table first (the correct one)
+      // First, try user_profiles table with a shorter timeout
       console.log(`🗄️ Querying 'user_profiles' table...`);
       
-      let { data, error } = await supabase
+      const profilePromise = supabase
         .from('user_profiles')
         .select('*')
         .eq('user_id', userId)
         .single();
 
-      // If not found in user_profiles, try users table as fallback
-      if (error?.code === 'PGRST116' || !data) {
-        console.log(`🗄️ Not found in user_profiles, trying 'users' table...`);
+      // Add a 5-second timeout for this specific query
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Profile query timeout')), 5000);
+      });
+
+      let profileResult;
+      try {
+        profileResult = await Promise.race([profilePromise, timeoutPromise]);
+      } catch (timeoutError) {
+        console.warn('⚠️ user_profiles query timed out, trying users table...');
+        profileResult = { data: null, error: { code: 'TIMEOUT' } };
+      }
+
+      let { data, error } = profileResult;
+
+      // If not found or timeout, try users table
+      if (error?.code === 'PGRST116' || error?.code === 'TIMEOUT' || !data) {
+        console.log(`🗄️ Trying 'users' table as fallback...`);
         
-        const usersResult = await supabase
+        const usersPromise = supabase
           .from('users')
           .select('id, email, username, full_name, role, is_active, created_at')
           .eq('id', userId)
           .single();
-        
-        data = usersResult.data;
-        error = usersResult.error;
-        
-        // If found in users table, create the missing user_profile
-        if (data && !error) {
-          console.log('🔧 Creating missing user_profile from users table data...');
-          try {
-            await supabase
-              .from('user_profiles')
-              .insert([{
-                user_id: data.id,
-                email: data.email,
-                username: data.username,
-                full_name: data.full_name,
-                role: data.role,
-                is_active: data.is_active
-              }]);
-            console.log('✅ Created missing user_profile');
-          } catch (createError) {
-            console.warn('⚠️ Could not create user_profile:', createError);
-          }
+
+        const usersTimeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Users query timeout')), 5000);
+        });
+
+        try {
+          const usersResult = await Promise.race([usersPromise, usersTimeoutPromise]);
+          data = usersResult.data;
+          error = usersResult.error;
+        } catch (usersTimeoutError) {
+          console.error('❌ Both profile queries timed out');
+          throw new Error('Database queries timed out');
         }
       }
 
-      if (error) {
+      if (error && error.code !== 'PGRST116') {
         console.error('❌ Profile fetch error:', error);
         
-        // Log the exact error details
-        console.error('❌ Error details:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-        
-        // If it's a "not found" error, return null
-        if (error.code === 'PGRST116') {
-          console.log('ℹ️ User not found in either table');
-          return null;
-        }
-        
-        // Only retry on network/temporary errors
-        if (attempt < 3 && !error.message?.includes('timeout')) {
-          console.log(`🔄 Retrying profile fetch (attempt ${attempt + 1})...`);
+        // Only retry once on network/temporary errors
+        if (attempt < 2 && !error.message?.includes('timeout')) {
+          console.log(`🔄 Retrying profile fetch...`);
           
           return new Promise((resolve) => {
             const timeout = setTimeout(() => {
               retryTimeouts.current.delete(timeout);
               resolve(fetchUserProfile(userId, attempt + 1));
-            }, 1000 * attempt);
+            }, 1000);
             retryTimeouts.current.add(timeout);
           });
         }
@@ -191,7 +173,7 @@ export const useAuth = () => {
       }
 
       if (data) {
-        // Normalize the data structure (handle both table formats)
+        // Normalize the data structure
         const profile = {
           id: data.user_id || data.id,
           email: data.email,
@@ -206,7 +188,7 @@ export const useAuth = () => {
         return profile;
       }
 
-      console.log('ℹ️ No user profile data returned for:', userId);
+      console.log('ℹ️ No user profile data found for:', userId);
       return null;
 
     } catch (error: any) {
@@ -222,10 +204,10 @@ export const useAuth = () => {
     }
   }, []);
 
+  // FIXED: Reduced timeout and better error handling
   const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false): Promise<void> => {
     const userId = session.user.id;
     
-    // CRITICAL: Only prevent if EXACTLY the same session is being processed
     if (isProcessingAuth.current && currentUserId.current === userId && currentUser?.id === userId) {
       console.log('⏭️ Already processing same session for authenticated user:', userId);
       return;
@@ -237,7 +219,7 @@ export const useAuth = () => {
     try {
       console.log('📱 Handling user session for:', session.user.email);
       
-      // Add overall timeout for the entire session handling
+      // FIXED: Reduced timeout to 8 seconds instead of 15
       const sessionTimeout = setTimeout(() => {
         console.error('❌ Session handling timeout - forcing completion');
         isProcessingAuth.current = false;
@@ -247,14 +229,13 @@ export const useAuth = () => {
         setSession(session);
         setCurrentUser(session.user as AuthUser);
         setIsAuthenticated(true);
-      }, 15000); // 15 second timeout
+      }, 8000);
       
       const profile = await fetchUserProfile(userId);
       
-      clearTimeout(sessionTimeout); // Cancel timeout if successful
+      clearTimeout(sessionTimeout);
       
       if (profile && profile.is_active) {
-        // SUCCESS: Set all auth state
         setSession(session);
         setCurrentUser({ ...session.user, ...profile });
         setUserProfile(profile);
@@ -271,7 +252,6 @@ export const useAuth = () => {
         }
         
       } else if (profile && !profile.is_active) {
-        // Account inactive
         console.log('⛔ User account is inactive');
         clearTimeout(sessionTimeout);
         await handleSignOut(true);
@@ -282,79 +262,27 @@ export const useAuth = () => {
         });
         
       } else {
-        // No profile found - try to create one for existing auth users
         console.log('❌ No profile found for user:', session.user.email, 'ID:', userId);
-        console.log('📋 User metadata:', session.user.user_metadata);
-        
         clearTimeout(sessionTimeout);
         
-        // Try to create a profile for this user if they have auth access
-        try {
-          console.log('🔧 Attempting to create missing user profile...');
-          
-          const newProfile = {
-            id: userId,
-            email: session.user.email || '',
-            username: session.user.user_metadata?.username || session.user.email?.split('@')[0] || 'user',
-            full_name: session.user.user_metadata?.full_name || session.user.user_metadata?.username || 'User',
-            role: session.user.user_metadata?.role || 'viewer', // Default to viewer
-            is_active: true
-          };
-          
-          const { data: createdProfile, error: createError } = await supabase
-            .from('users')
-            .insert([newProfile])
-            .select()
-            .single();
-            
-          if (createError) {
-            console.error('❌ Failed to create user profile:', createError);
-            throw createError;
-          }
-          
-          console.log('✅ Created missing user profile:', createdProfile);
-          
-          // Now set up the session with the new profile
-          setSession(session);
-          setCurrentUser({ ...session.user, ...createdProfile });
-          setUserProfile(createdProfile);
-          setIsAuthenticated(true);
-          setLoading(false);
-          
-          toast({
-            title: 'Profile Created',
-            description: 'Your user profile has been created successfully!',
-          });
-          
-          if (showWelcome) {
-            toast({
-              title: 'Success',
-              description: `Welcome, ${createdProfile.full_name || createdProfile.username || 'User'}!`
-            });
-          }
-          
-        } catch (profileCreateError) {
-          console.error('❌ Could not create user profile:', profileCreateError);
-          
-          // FALLBACK: Set basic auth without profile to prevent infinite loops
-          console.log('🔧 Using fallback auth state to prevent loops');
-          setSession(session);
-          setCurrentUser(session.user as AuthUser);
-          setIsAuthenticated(true);
-          setLoading(false);
-          
-          toast({
-            title: 'Limited Access',
-            description: 'Logged in with limited access. Contact admin to complete profile setup.',
-            variant: 'destructive'
-          });
-        }
+        // FIXED: Instead of trying to create a profile, set basic auth state
+        console.log('🔧 Using fallback auth state - profile needs to be created by admin');
+        setSession(session);
+        setCurrentUser(session.user as AuthUser);
+        setIsAuthenticated(true);
+        setLoading(false);
+        
+        toast({
+          title: 'Profile Missing',
+          description: 'Your user profile is incomplete. Please contact your administrator.',
+          variant: 'destructive'
+        });
       }
       
     } catch (error) {
       console.error('❌ Error handling user session:', error);
       
-      // FALLBACK: Don't sign out, just set basic auth state
+      // FIXED: Always set basic auth state as fallback
       console.log('🔧 Error fallback - setting basic auth state');
       setSession(session);
       setCurrentUser(session.user as AuthUser);
@@ -372,10 +300,7 @@ export const useAuth = () => {
     }
   }, [fetchUserProfile, toast, currentUser, handleSignOut]);
 
-  // Remove the old handleSignOut definition that was here
-
   useEffect(() => {
-    // CRITICAL: Prevent multiple initializations
     if (isInitialized.current) {
       console.log('⏭️ Auth already initialized, skipping...');
       return;
@@ -384,11 +309,9 @@ export const useAuth = () => {
     isInitialized.current = true;
     console.log('🔐 Initializing auth system...');
 
-    // Clear cross-domain auth conflicts on development
     if (window.location.hostname === 'localhost') {
       console.log('🧹 Development mode: clearing potential auth conflicts...');
       try {
-        // Only clear auth tokens, not all localStorage
         Object.keys(localStorage).forEach(key => {
           if (key.includes('supabase.auth') || key.includes('sb-')) {
             localStorage.removeItem(key);
@@ -404,7 +327,6 @@ export const useAuth = () => {
       try {
         setLoading(true);
         
-        // Get current session
         const { data: { session }, error } = await supabase.auth.getSession();
 
         if (error) {
@@ -429,12 +351,10 @@ export const useAuth = () => {
 
     initializeAuth();
 
-    // CRITICAL: Set up auth state listener with better error handling
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('🔄 Auth state changed:', event, 'Session exists:', !!session);
         
-        // Prevent processing during ongoing auth operations
         if (isProcessingAuth.current && event !== 'SIGNED_OUT') {
           console.log('⏭️ Skipping auth event during processing:', event);
           return;
@@ -442,7 +362,6 @@ export const useAuth = () => {
         
         try {
           if (event === 'SIGNED_IN' && session) {
-            // Only process if it's a different user or we're not authenticated
             if (!isAuthenticated || currentUserId.current !== session.user.id) {
               console.log('🔑 Processing SIGNED_IN event...');
               await handleUserSession(session, false);
@@ -453,12 +372,11 @@ export const useAuth = () => {
             
           } else if (event === 'SIGNED_OUT') {
             console.log('🚪 Processing SIGNED_OUT event...');
-            await handleSignOut(true); // Skip supabase signout since it's already done
+            await handleSignOut(true);
             
           } else if (event === 'TOKEN_REFRESHED' && session) {
             console.log('🔄 Processing TOKEN_REFRESHED event...');
             
-            // Only update session, don't refetch profile
             if (currentUserId.current === session.user.id && userProfile) {
               setSession(session);
               setCurrentUser({
@@ -469,7 +387,6 @@ export const useAuth = () => {
                 is_active: userProfile.is_active
               });
             } else {
-              // If we don't have profile data, fetch it
               await handleUserSession(session, false);
             }
             
@@ -528,7 +445,6 @@ export const useAuth = () => {
 
       console.log('✅ Login successful, handling session...');
       
-      // Handle the session with welcome message
       await handleUserSession(data.session, true);
       
       return true;
@@ -555,12 +471,10 @@ export const useAuth = () => {
       console.log('🚪 Logging out...');
       setLoading(true);
       
-      // Clear state immediately for better UX
-      await handleSignOut(false); // This will also call supabase.auth.signOut()
+      await handleSignOut(false);
       
     } catch (error) {
       console.error('❌ Logout exception:', error);
-      // Still clear state even if logout fails
       await handleSignOut(true);
       toast({
         title: 'Error',
@@ -577,9 +491,9 @@ export const useAuth = () => {
     if (!userProfile) return false;
     
     const rolePermissions = {
-      super_admin: ['*'], // All permissions
+      super_admin: ['*'],
       admin: [
-        'view_users', 'manage_users', 'delete_users', // User management
+        'view_users', 'manage_users', 'delete_users',
         'view_financial_reports', 'view_earnings', 'edit_earnings',
         'manage_machines', 'view_machines', 'edit_machine_reports',
         'manage_venues', 'view_venues', 'manage_prizes', 'view_inventory',
@@ -588,7 +502,7 @@ export const useAuth = () => {
         'manage_email_notifications'
       ],
       manager: [
-        'view_users', // Can view but not manage users
+        'view_users',
         'view_earnings', 'manage_machines', 'view_machines',
         'edit_machine_reports', 'manage_venues', 'view_venues',
         'manage_prizes', 'view_inventory', 'manage_stock', 'manage_jobs',
@@ -607,7 +521,6 @@ export const useAuth = () => {
     return userPermissions.includes('*') || userPermissions.includes(permission);
   };
 
-  // ALL USER MANAGEMENT FUNCTIONS PRESERVED EXACTLY
   const canManageUsers = (): boolean => {
     if (!userProfile) return false;
     return userProfile.role === 'super_admin' || userProfile.role === 'admin';

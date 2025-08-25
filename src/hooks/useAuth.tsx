@@ -1,5 +1,5 @@
-// src/hooks/useAuth.tsx - Fixed version that prevents loading loops
-import { useState, useEffect, useRef } from 'react';
+// src/hooks/useAuth.tsx - FIXED VERSION to prevent loading loops
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import type { User, Session } from '@supabase/supabase-js';
@@ -31,76 +31,114 @@ export const useAuth = () => {
   const [session, setSession] = useState<Session | null>(null);
   const { toast } = useToast();
   
-  // Prevent infinite loops with refs
+  // CRITICAL: Prevent infinite loops and multiple initializations
   const isInitialized = useRef(false);
-  const currentAttempt = useRef(0);
-  const maxRetries = 3;
+  const isProcessingAuth = useRef(false);
+  const currentUserId = useRef<string | null>(null);
+  const retryTimeouts = useRef<Set<NodeJS.Timeout>>(new Set());
 
-  // Enhanced profile fetching with retry logic
-  const fetchUserProfile = async (userId: string, attempt: number = 1): Promise<UserProfile | null> => {
+  // Clear all timeouts on unmount
+  useEffect(() => {
+    return () => {
+      retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
+      retryTimeouts.current.clear();
+    };
+  }, []);
+
+  // Enhanced profile fetching with better error handling and loop prevention
+  const fetchUserProfile = useCallback(async (userId: string, attempt: number = 1): Promise<UserProfile | null> => {
+    // Prevent duplicate requests for same user
+    if (currentUserId.current === userId && isProcessingAuth.current) {
+      console.log('⏭️ Skipping duplicate profile fetch for:', userId);
+      return null;
+    }
+
     try {
-      console.log(`🔍 Fetching user profile (attempt ${attempt}/${maxRetries})...`);
+      console.log(`🔍 Fetching user profile (attempt ${attempt}/3) for:`, userId);
       
-      // Clear any problematic cache before fetching
-      if (attempt === 1) {
-        // Only clear on first attempt to avoid loops
-        try {
-          const cacheKeys = Object.keys(localStorage).filter(key => 
-            key.includes('user') && !key.includes('auth-token')
-          );
-          cacheKeys.forEach(key => localStorage.removeItem(key));
-        } catch (e) {
-          // Ignore cache clearing errors
-        }
-      }
-
       const { data, error } = await supabase
         .from('users')
         .select('id, email, username, full_name, role, is_active, created_at')
         .eq('id', userId)
         .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('❌ Error fetching user profile:', error);
-        if (attempt < maxRetries) {
+      if (error) {
+        console.error('❌ Profile fetch error:', error);
+        
+        // Only retry on network/temporary errors, not on missing data
+        if (attempt < 3 && error.code !== 'PGRST116') {
           console.log(`🔄 Retrying profile fetch (attempt ${attempt + 1})...`);
-          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-          return fetchUserProfile(userId, attempt + 1);
+          
+          return new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+              retryTimeouts.current.delete(timeout);
+              resolve(fetchUserProfile(userId, attempt + 1));
+            }, 1000 * attempt);
+            retryTimeouts.current.add(timeout);
+          });
         }
+        
         throw error;
       }
 
       if (data) {
-        console.log('✅ User profile fetched successfully:', data);
+        console.log('✅ User profile fetched successfully:', data.email, 'Role:', data.role);
         return data;
       }
 
-      // No profile found - this is expected for new users
       console.log('ℹ️ No user profile found for:', userId);
       return null;
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error in fetchUserProfile:', error);
-      if (attempt < maxRetries) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-        return fetchUserProfile(userId, attempt + 1);
+      
+      // Don't retry on auth errors or missing profile errors
+      if (error.code === 'PGRST116' || error.message?.includes('JWT')) {
+        console.log('🚫 Not retrying due to auth/missing profile error');
+        return null;
       }
+      
+      // Only retry on genuine network errors
+      if (attempt < 3 && error.name === 'NetworkError') {
+        return new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            retryTimeouts.current.delete(timeout);
+            resolve(fetchUserProfile(userId, attempt + 1));
+          }, 1000 * attempt);
+          retryTimeouts.current.add(timeout);
+        });
+      }
+      
       return null;
     }
-  };
+  }, []);
 
-  const handleUserSession = async (session: Session, showWelcome: boolean = false) => {
+  const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false): Promise<void> => {
+    const userId = session.user.id;
+    
+    // CRITICAL: Prevent processing same session multiple times
+    if (isProcessingAuth.current && currentUserId.current === userId) {
+      console.log('⏭️ Already processing session for user:', userId);
+      return;
+    }
+
+    isProcessingAuth.current = true;
+    currentUserId.current = userId;
+
     try {
       console.log('📱 Handling user session for:', session.user.email);
       
-      const profile = await fetchUserProfile(session.user.id);
+      const profile = await fetchUserProfile(userId);
       
       if (profile && profile.is_active) {
+        // SUCCESS: Set all auth state
         setSession(session);
         setCurrentUser({ ...session.user, ...profile });
         setUserProfile(profile);
         setIsAuthenticated(true);
-        console.log('✅ User session established successfully');
+        setLoading(false);
+        
+        console.log('✅ User session established successfully for:', profile.email);
         
         if (showWelcome) {
           toast({
@@ -108,74 +146,121 @@ export const useAuth = () => {
             description: `Welcome back, ${profile.full_name || profile.username || 'User'}!`
           });
         }
+        
       } else if (profile && !profile.is_active) {
+        // Account inactive
         console.log('⛔ User account is inactive');
-        await supabase.auth.signOut();
+        await handleSignOut(true);
         toast({
           title: 'Account Inactive',
           description: 'Your account has been deactivated. Please contact an administrator.',
           variant: 'destructive'
         });
-        handleSignOut();
+        
       } else {
         // No profile found - sign out to prevent loops
         console.log('❌ No profile found, signing out to prevent loops');
-        await supabase.auth.signOut();
-        handleSignOut();
+        await handleSignOut(true);
         toast({
           title: 'Access Denied',
           description: 'Your account is not properly configured.',
           variant: 'destructive'
         });
       }
+      
     } catch (error) {
       console.error('❌ Error handling user session:', error);
-      await supabase.auth.signOut();
-      handleSignOut();
+      await handleSignOut(true);
+      toast({
+        title: 'Session Error',
+        description: 'Failed to establish session. Please try logging in again.',
+        variant: 'destructive'
+      });
+    } finally {
+      isProcessingAuth.current = false;
+      setLoading(false);
     }
-  };
+  }, [fetchUserProfile, toast]);
 
-  const handleSignOut = () => {
+  const handleSignOut = useCallback(async (skipSupabaseSignOut: boolean = false): Promise<void> => {
     console.log('🧹 Clearing all auth state...');
+    
+    // Clear processing flags
+    isProcessingAuth.current = false;
+    currentUserId.current = null;
+    
+    // Clear all timeouts
+    retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
+    retryTimeouts.current.clear();
+    
+    // Clear auth state
     setSession(null);
     setCurrentUser(null);
     setUserProfile(null);
     setIsAuthenticated(false);
+    setLoading(false);
     
-    // Clear any cached user data to prevent stale data issues
+    // Clear problematic cache while preserving auth tokens
     try {
-      const userKeys = Object.keys(localStorage).filter(key => 
-        key.includes('user') && !key.includes('auth-token') && !key.includes('sb-')
-      );
-      userKeys.forEach(key => {
-        localStorage.removeItem(key);
-        console.log('🗑️ Cleared:', key);
+      const keysToRemove: string[] = [];
+      
+      Object.keys(localStorage).forEach(key => {
+        // Preserve Supabase auth keys but remove other cache
+        const shouldPreserve = key.includes('sb-') || key.includes('supabase.auth');
+        
+        if (!shouldPreserve && (
+          key.includes('user') || 
+          key.includes('profile') || 
+          key.includes('cache') ||
+          key.includes('metadata')
+        )) {
+          keysToRemove.push(key);
+        }
       });
       
-      // Also clear sessionStorage
-      const sessionKeys = Object.keys(sessionStorage).filter(key => 
-        key.includes('user') && !key.includes('auth-token') && !key.includes('sb-')
-      );
-      sessionKeys.forEach(key => {
-        sessionStorage.removeItem(key);
-        console.log('🗑️ Cleared session:', key);
+      keysToRemove.forEach(key => {
+        localStorage.removeItem(key);
+        console.log('🗑️ Cleared cache:', key);
       });
-    } catch (e) {
-      console.warn('⚠️ Cache clearing failed:', e);
+      
+      // Clear sessionStorage (usually safe)
+      try {
+        sessionStorage.clear();
+      } catch (e) {
+        console.warn('⚠️ SessionStorage clear failed:', e);
+      }
+      
+    } catch (error) {
+      console.warn('⚠️ Cache clearing failed:', error);
+    }
+    
+    // Sign out from Supabase if requested
+    if (!skipSupabaseSignOut) {
+      try {
+        await supabase.auth.signOut();
+      } catch (error) {
+        console.error('❌ Supabase signout error:', error);
+      }
     }
     
     console.log('✅ Auth state cleared completely');
-  };
+  }, []);
 
   useEffect(() => {
-    // Prevent multiple initializations
-    if (isInitialized.current) return;
+    // CRITICAL: Prevent multiple initializations
+    if (isInitialized.current) {
+      console.log('⏭️ Auth already initialized, skipping...');
+      return;
+    }
+    
     isInitialized.current = true;
+    console.log('🔐 Initializing auth system...');
 
-    console.log('🔐 Getting initial session...');
-
-    const getSession = async () => {
+    const initializeAuth = async () => {
       try {
+        setLoading(true);
+        
+        // Get current session
         const { data: { session }, error } = await supabase.auth.getSession();
 
         if (error) {
@@ -186,58 +271,73 @@ export const useAuth = () => {
 
         if (session) {
           console.log('📱 Found existing session for:', session.user.email);
-          await handleUserSession(session, false); // Don't show welcome on initial load
+          await handleUserSession(session, false);
         } else {
           console.log('ℹ️ No session found');
+          setLoading(false);
         }
+        
       } catch (error) {
-        console.error('❌ Error in getSession:', error);
-      } finally {
+        console.error('❌ Error in auth initialization:', error);
         setLoading(false);
       }
     };
 
-    getSession();
+    initializeAuth();
 
-    // Listen for auth changes
+    // CRITICAL: Set up auth state listener with better error handling
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('🔄 Auth state changed:', event, 'Session exists:', !!session);
         
-        // Reset attempt counter on new auth events
-        currentAttempt.current = 0;
-        
-        if (event === 'SIGNED_IN' && session) {
-          console.log('🔑 Processing SIGNED_IN event...');
-          // Only handle if we don't already have this session
-          if (!currentUser || currentUser.id !== session.user.id) {
-            await handleUserSession(session, false); // Don't show welcome since login() handles it
-          } else {
-            console.log('ℹ️ Session already handled by login function');
-          }
-        } else if (event === 'SIGNED_OUT') {
-          console.log('🚪 Processing SIGNED_OUT event...');
-          handleSignOut();
-          toast({
-            title: 'Logged Out',
-            description: 'You have been logged out successfully'
-          });
-        } else if (event === 'TOKEN_REFRESHED' && session) {
-          console.log('🔄 Processing TOKEN_REFRESHED event...');
-          // Don't refetch profile on token refresh to avoid loops
-          setSession(session);
-          if (currentUser && userProfile) {
-            setCurrentUser({
-              ...session.user,
-              role: userProfile.role,
-              username: userProfile.username,
-              full_name: userProfile.full_name,
-              is_active: userProfile.is_active
-            });
-          }
+        // Prevent processing during ongoing auth operations
+        if (isProcessingAuth.current && event !== 'SIGNED_OUT') {
+          console.log('⏭️ Skipping auth event during processing:', event);
+          return;
         }
         
-        setLoading(false);
+        try {
+          if (event === 'SIGNED_IN' && session) {
+            // Only process if it's a different user or we're not authenticated
+            if (!isAuthenticated || currentUserId.current !== session.user.id) {
+              console.log('🔑 Processing SIGNED_IN event...');
+              await handleUserSession(session, false);
+            } else {
+              console.log('ℹ️ Session already processed for current user');
+              setLoading(false);
+            }
+            
+          } else if (event === 'SIGNED_OUT') {
+            console.log('🚪 Processing SIGNED_OUT event...');
+            await handleSignOut(true); // Skip supabase signout since it's already done
+            
+          } else if (event === 'TOKEN_REFRESHED' && session) {
+            console.log('🔄 Processing TOKEN_REFRESHED event...');
+            
+            // Only update session, don't refetch profile
+            if (currentUserId.current === session.user.id && userProfile) {
+              setSession(session);
+              setCurrentUser({
+                ...session.user,
+                role: userProfile.role,
+                username: userProfile.username,
+                full_name: userProfile.full_name,
+                is_active: userProfile.is_active
+              });
+            } else {
+              // If we don't have profile data, fetch it
+              await handleUserSession(session, false);
+            }
+            
+          } else {
+            console.log('ℹ️ Unhandled auth event:', event);
+            setLoading(false);
+          }
+          
+        } catch (error) {
+          console.error('❌ Error in auth state change handler:', error);
+          setLoading(false);
+        }
       }
     );
 
@@ -245,9 +345,14 @@ export const useAuth = () => {
       console.log('🧹 Cleaning up auth subscription...');
       subscription.unsubscribe();
     };
-  }, [toast]);
+  }, [handleUserSession, handleSignOut, isAuthenticated, userProfile]);
 
   const login = async (email: string, password: string): Promise<boolean> => {
+    if (isProcessingAuth.current) {
+      console.log('⏭️ Login already in progress, skipping...');
+      return false;
+    }
+
     try {
       setLoading(true);
       console.log('🔐 Attempting login for:', email);
@@ -277,9 +382,9 @@ export const useAuth = () => {
         return false;
       }
 
-      console.log('✅ Login successful, handling session immediately...');
+      console.log('✅ Login successful, handling session...');
       
-      // Handle the session immediately instead of waiting for auth state change
+      // Handle the session with welcome message
       await handleUserSession(data.session, true);
       
       return true;
@@ -296,44 +401,26 @@ export const useAuth = () => {
     }
   };
 
-  const logout = async () => {
+  const logout = async (): Promise<void> => {
+    if (isProcessingAuth.current) {
+      console.log('⏭️ Logout already in progress, skipping...');
+      return;
+    }
+
     try {
       console.log('🚪 Logging out...');
       setLoading(true);
       
-      // Clear state IMMEDIATELY for better UX
-      console.log('🧹 Clearing auth state immediately...');
-      handleSignOut();
-      
-      // Then sign out from Supabase
-      const { error } = await supabase.auth.signOut();
-
-      if (error) {
-        console.error('❌ Logout error:', error);
-        toast({
-          title: 'Error',
-          description: 'Failed to log out. Please try again.',
-          variant: 'destructive'
-        });
-        // Don't restore state - better to be logged out than stuck
-      } else {
-        console.log('✅ Supabase logout successful');
-      }
-      
-      // Force clear any remaining auth data
-      try {
-        await supabase.auth.getSession(); // This helps trigger cleanup
-      } catch (e) {
-        // Ignore errors here
-      }
+      // Clear state immediately for better UX
+      await handleSignOut(false); // This will also call supabase.auth.signOut()
       
     } catch (error) {
       console.error('❌ Logout exception:', error);
       // Still clear state even if logout fails
-      handleSignOut();
+      await handleSignOut(true);
       toast({
         title: 'Error',
-        description: 'Failed to log out. Please try again.',
+        description: 'Failed to log out completely. Please try again.',
         variant: 'destructive'
       });
     } finally {
@@ -421,7 +508,7 @@ export const useAuth = () => {
       'email-notifications': 'manage_email_notifications',
       'dashboard': 'always',
       'map': 'view_venues',
-      'parts': 'manage_stock'  // <-- Add this line
+      'parts': 'manage_stock'
     };
   
     const requiredPermission = viewPermissions[view];
@@ -429,7 +516,6 @@ export const useAuth = () => {
   
     return requiredPermission ? hasPermission(requiredPermission) : false;
   };
-  
 
   return {
     isAuthenticated,

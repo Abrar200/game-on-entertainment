@@ -1,4 +1,4 @@
-// App.tsx - Enhanced with better authentication flow
+// App.tsx - FIXED VERSION to prevent loading loops
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -13,10 +13,16 @@ import Reports from "./pages/Reports";
 import PayoutIssuesPage from "./pages/PayoutIssues";
 import EditingGuidePage from "./pages/EditingGuide";
 import NotFound from "./pages/NotFound";
-import { useEffect, useState } from "react";
-import { CacheManager } from "@/lib/cacheManager";
+import { useEffect, useState, useRef } from "react";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 const AppContent = () => {
   const { 
@@ -30,41 +36,36 @@ const AppContent = () => {
   } = useAuth();
 
   const [appReady, setAppReady] = useState(false);
+  const initializationStarted = useRef(false);
 
-  // Initialize app and handle authentication state changes
+  // CRITICAL: Simplified app initialization without cache manipulation
   useEffect(() => {
-    let mounted = true;
+    if (initializationStarted.current) {
+      return;
+    }
+    
+    initializationStarted.current = true;
 
     const initializeApp = async () => {
       try {
         console.log('🚀 Initializing app...');
         
-        // Clear any problematic cache on app start
-        CacheManager.clearProblematicCache();
-        
-        // Wait for auth to settle
+        // Simple delay to ensure auth is ready
         await new Promise(resolve => setTimeout(resolve, 100));
         
-        if (mounted) {
-          setAppReady(true);
-          console.log('✅ App initialized');
-        }
+        setAppReady(true);
+        console.log('✅ App initialized');
+        
       } catch (error) {
         console.error('❌ App initialization error:', error);
-        if (mounted) {
-          setAppReady(true); // Still show the app even if cache clearing fails
-        }
+        setAppReady(true); // Still show the app even if init fails
       }
     };
 
     initializeApp();
-
-    return () => {
-      mounted = false;
-    };
   }, []);
 
-  // Enhanced login handler with better state management
+  // Enhanced login handler with better error handling
   const handleLogin = async (email: string, password: string): Promise<boolean> => {
     try {
       console.log('🔐 App: Login attempt for:', email);
@@ -73,10 +74,6 @@ const AppContent = () => {
       
       if (success) {
         console.log('✅ App: Login successful');
-        // Clear cache to ensure fresh data after a short delay
-        setTimeout(() => {
-          CacheManager.smartRefresh();
-        }, 1000);
       } else {
         console.log('❌ App: Login failed');
       }
@@ -92,14 +89,7 @@ const AppContent = () => {
   const handleLogout = async (): Promise<void> => {
     try {
       console.log('👋 App: Logout initiated');
-      
       await logout();
-      
-      // Clear all user-related cache after logout
-      setTimeout(() => {
-        CacheManager.smartRefresh();
-      }, 500);
-      
       console.log('✅ App: Logout completed');
     } catch (error) {
       console.error('❌ App: Logout error:', error);
@@ -107,8 +97,24 @@ const AppContent = () => {
     }
   };
 
-  // Show loading screen while app initializes or auth is loading
-  if (!appReady || loading) {
+  // CRITICAL: Better loading state management
+  const shouldShowLoading = !appReady || loading;
+  const shouldShowLogin = appReady && !loading && (!isAuthenticated || !userProfile);
+  const shouldShowMainApp = appReady && !loading && isAuthenticated && userProfile;
+
+  // Debug logging
+  console.log('🔍 App render state:', {
+    appReady,
+    loading,
+    isAuthenticated,
+    hasUserProfile: !!userProfile,
+    shouldShowLoading,
+    shouldShowLogin,
+    shouldShowMainApp
+  });
+
+  // Show loading screen
+  if (shouldShowLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
         <div className="text-center">
@@ -124,70 +130,85 @@ const AppContent = () => {
     );
   }
 
-  // Debug logging for authentication state
-  console.log('🔍 App render - isAuthenticated:', isAuthenticated, 'userProfile:', !!userProfile, 'loading:', loading);
-
-  // Show login form if not authenticated
-  if (!isAuthenticated || !userProfile) {
+  // Show login form
+  if (shouldShowLogin) {
     console.log('🔒 App: Showing login form');
     return <LoginForm onLogin={handleLogin} />;
   }
 
-  // Show main app if authenticated
-  console.log('🏠 App: Showing main app for user:', userProfile.email);
-  console.log('🛠️ canAccessView parts:', canAccessView('parts'));
-  
-  return (
-    <AppProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route 
-            path="/" 
-            element={
-              <Index 
-                onLogout={handleLogout} 
-                userProfile={userProfile}
-                hasPermission={hasPermission}
-                canAccessView={canAccessView}
-              />
-            } 
-          />
-          {canAccessView('reports') && (
+  // Show main app
+  if (shouldShowMainApp) {
+    console.log('🏠 App: Showing main app for user:', userProfile.email);
+    
+    return (
+      <AppProvider>
+        <BrowserRouter>
+          <Routes>
             <Route 
-              path="/reports" 
+              path="/" 
               element={
-                <Reports 
-                  onLogout={handleLogout}
+                <Index 
+                  onLogout={handleLogout} 
                   userProfile={userProfile}
                   hasPermission={hasPermission}
+                  canAccessView={canAccessView}
                 />
               } 
             />
-          )}
-          {hasPermission('view_analytics') && (
+            {canAccessView('reports') && (
+              <Route 
+                path="/reports" 
+                element={
+                  <Reports 
+                    onLogout={handleLogout}
+                    userProfile={userProfile}
+                    hasPermission={hasPermission}
+                  />
+                } 
+              />
+            )}
+            {hasPermission('view_analytics') && (
+              <Route 
+                path="/payout-issues" 
+                element={
+                  <PayoutIssuesPage 
+                    onLogout={handleLogout}
+                    userProfile={userProfile}
+                  />
+                } 
+              />
+            )}
             <Route 
-              path="/payout-issues" 
+              path="/editing-guide" 
               element={
-                <PayoutIssuesPage 
+                <EditingGuidePage 
                   onLogout={handleLogout}
                   userProfile={userProfile}
                 />
               } 
             />
-          )}
-          <Route 
-            path="/editing-guide" 
-            element={
-              <EditingGuidePage 
-                onLogout={handleLogout}
-                userProfile={userProfile}
-              />
-            } 
-          />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </AppProvider>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </AppProvider>
+    );
+  }
+
+  // Fallback - should never reach here
+  console.error('❌ App: Reached unexpected state, showing loading...');
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-red-600 mx-auto"></div>
+        <p className="mt-4 text-red-600">Unexpected state. Please refresh the page.</p>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+        >
+          Refresh Page
+        </button>
+      </div>
+    </div>
   );
 };
 

@@ -136,13 +136,15 @@ export const useAuth = () => {
   }, []);
 
   // IMMEDIATE RESPONSE: Set UI state instantly, then upgrade in background
-  const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false): Promise<void> => {
-    if (isProcessingAuth.current) {
+  const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false, bypassAuthCheck: boolean = false): Promise<void> => {
+    if (isProcessingAuth.current && !bypassAuthCheck) {
       console.log('Auth already processing, skipping...');
       return;
     }
     
-    isProcessingAuth.current = true;
+    if (!bypassAuthCheck) {
+      isProcessingAuth.current = true;
+    }
     
     try {
       console.log('Processing session for:', session.user.email);
@@ -184,7 +186,9 @@ export const useAuth = () => {
         variant: 'destructive'
       });
     } finally {
-      isProcessingAuth.current = false;
+      if (!bypassAuthCheck) {
+        isProcessingAuth.current = false;
+      }
     }
   }, [fetchUserProfile, toast]);
 
@@ -272,7 +276,7 @@ export const useAuth = () => {
 
       // Handle session directly in login instead of waiting for auth state change
       console.log('Login successful, processing session...');
-      await handleUserSession(data.session, true);
+      await handleUserSession(data.session, true, true); // bypassAuthCheck = true
       return true;
       
     } catch (error) {

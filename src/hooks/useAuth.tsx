@@ -389,6 +389,7 @@ export const useAuth = () => {
     const viewPermissions = {
       'users': 'view_users',
       'reports': 'view_financial_reports',
+      'view-reports': 'view_financial_reports', // NEW: View Reports access
       'machines': 'view_machines',
       'venues': 'view_venues',
       'prizes': 'view_inventory',
@@ -402,6 +403,11 @@ export const useAuth = () => {
   
     const requiredPermission = viewPermissions[view];
     if (requiredPermission === 'always') return true;
+  
+    // For view-reports, allow both view_financial_reports OR view_earnings permissions
+    if (view === 'view-reports') {
+      return hasPermission('view_financial_reports') || hasPermission('view_earnings');
+    }
   
     return requiredPermission ? hasPermission(requiredPermission) : false;
   };

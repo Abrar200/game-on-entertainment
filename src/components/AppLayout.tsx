@@ -20,6 +20,7 @@ import StockAnalytics from './StockAnalytics';
 import MachineHistoryManager from './MachineHistoryManager';
 import VenueMap from './VenueMap';
 import EmailNotificationManager from './EmailNotificationManager';
+import ViewReportsPage from './ViewReportsPage';
 
 interface AppLayoutProps {
   children?: React.ReactNode;
@@ -130,6 +131,19 @@ const AppLayout: React.FC<AppLayoutProps> = ({
     
     // Check access for each view
     switch (currentView) {
+      case 'view-reports':
+        // Check if user has permission to view reports
+        if (!hasPermission('view_financial_reports') && !hasPermission('view_earnings')) {
+          return (
+            <AccessDenied 
+              viewName="View Reports" 
+              userRole={userProfile.role}
+              onBackToDashboard={() => setCurrentView('dashboard')}
+            />
+          );
+        }
+        return <ViewReportsPage userProfile={userProfile} hasPermission={hasPermission} />;
+        
       case 'reports':
       case 'machine-reports':
         if (!canAccessView('reports')) {

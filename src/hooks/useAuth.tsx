@@ -1,4 +1,4 @@
-// src/hooks/useAuth.tsx - OPTIMIZED VERSION
+// src/hooks/useAuth.tsx - PRODUCTION OPTIMIZED VERSION
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -32,17 +32,31 @@ export const useAuth = () => {
   const { toast } = useToast();
   
   const isInitialized = useRef(false);
+  const isProcessingAuth = useRef(false);
   const currentUserId = useRef<string | null>(null);
+  const retryTimeouts = useRef<Set<NodeJS.Timeout>>(new Set());
   const profileCache = useRef<Map<string, { profile: UserProfile | null, timestamp: number }>>(new Map());
 
-  // Cache TTL: 5 minutes
-  const CACHE_TTL = 5 * 60 * 1000;
-  const QUERY_TIMEOUT = 5000; // Reduced to 5 seconds
+  // Cache TTL: 1 minute for production
+  const CACHE_TTL = 1 * 60 * 1000;
+
+  useEffect(() => {
+    return () => {
+      retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
+      retryTimeouts.current.clear();
+    };
+  }, []);
 
   const handleSignOut = useCallback(async (skipSupabaseSignOut: boolean = false): Promise<void> => {
-    console.log('🧹 Clearing auth state...');
+    console.log('🧹 Clearing all auth state...');
     
+    isProcessingAuth.current = false;
     currentUserId.current = null;
+    
+    retryTimeouts.current.forEach(timeout => clearTimeout(timeout));
+    retryTimeouts.current.clear();
+    
+    // Clear profile cache
     profileCache.current.clear();
     
     setSession(null);
@@ -51,124 +65,229 @@ export const useAuth = () => {
     setIsAuthenticated(false);
     setLoading(false);
     
+    try {
+      const keysToRemove: string[] = [];
+      
+      Object.keys(localStorage).forEach(key => {
+        const shouldPreserve = key.includes('sb-') || key.includes('supabase.auth');
+        
+        if (!shouldPreserve && (
+          key.includes('user') || 
+          key.includes('profile') || 
+          key.includes('cache') ||
+          key.includes('metadata')
+        )) {
+          keysToRemove.push(key);
+        }
+      });
+      
+      keysToRemove.forEach(key => {
+        localStorage.removeItem(key);
+        console.log('🗑️ Cleared cache:', key);
+      });
+      
+      try {
+        sessionStorage.clear();
+      } catch (e) {
+        console.warn('⚠️ SessionStorage clear failed:', e);
+      }
+      
+    } catch (error) {
+      console.warn('⚠️ Cache clearing failed:', error);
+    }
+    
     if (!skipSupabaseSignOut) {
       try {
         await supabase.auth.signOut();
       } catch (error) {
-        console.warn('⚠️ Supabase signout error:', error);
+        console.error('❌ Supabase signout error:', error);
       }
     }
     
-    console.log('✅ Auth state cleared');
+    console.log('✅ Auth state cleared completely');
   }, []);
 
-  // OPTIMIZED: Single query with proper fallback
-  const fetchUserProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
+  // PRODUCTION OPTIMIZED: Faster profile fetching with shorter timeouts
+  const fetchUserProfile = useCallback(async (userId: string, attempt: number = 1): Promise<UserProfile | null> => {
+    const isProduction = window.location.hostname !== 'localhost';
+    
     try {
-      console.log(`🔍 Fetching profile for:`, userId);
+      console.log(`🔍 Fetching user profile (attempt ${attempt}/2) for:`, userId);
       
       // Check cache first
       const cached = profileCache.current.get(userId);
       if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
-        console.log('📦 Using cached profile');
+        console.log('📦 Using cached profile for:', userId);
         return cached.profile;
       }
 
-      // Single query with timeout
-      const queryPromise = supabase
+      // MUCH SHORTER TIMEOUTS for production
+      const timeoutDuration = isProduction ? 8000 : 5000; // 8s for production, 5s for dev
+
+      console.log(`🗄️ Querying 'users' table (timeout: ${timeoutDuration}ms)...`);
+      
+      const usersPromise = supabase
         .from('users')
         .select('id, email, username, full_name, role, is_active, created_at')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Query timeout')), QUERY_TIMEOUT);
+        setTimeout(() => reject(new Error('Users query timeout')), timeoutDuration);
       });
 
       let result;
       try {
-        result = await Promise.race([queryPromise, timeoutPromise]);
+        result = await Promise.race([usersPromise, timeoutPromise]);
       } catch (timeoutError) {
-        console.warn('⚠️ Users query timed out, trying user_profiles...');
+        console.warn(`⚠️ users table query timed out after ${timeoutDuration}ms`);
         
-        // Fallback to user_profiles
-        try {
-          const profileResult = await supabase
+        // For production, try a much faster fallback
+        if (isProduction && attempt === 1) {
+          console.log('🚀 Production: Trying direct user_profiles query...');
+          const fastProfilePromise = supabase
             .from('user_profiles')
             .select('user_id, username, full_name, role, is_active, created_at')
             .eq('user_id', userId)
-            .single();
-            
-          if (profileResult.data) {
-            result = {
-              data: {
-                id: profileResult.data.user_id,
+            .maybeSingle();
+
+          const fastTimeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('Fast profile query timeout')), 5000);
+          });
+
+          try {
+            result = await Promise.race([fastProfilePromise, fastTimeoutPromise]);
+            if (result.data) {
+              result.data = {
+                id: result.data.user_id,
                 email: '', // Will be filled from session
-                username: profileResult.data.username,
-                full_name: profileResult.data.full_name,
-                role: profileResult.data.role,
-                is_active: profileResult.data.is_active,
-                created_at: profileResult.data.created_at
-              },
-              error: null
-            };
-          } else {
-            throw new Error('No profile data found');
+                username: result.data.username,
+                full_name: result.data.full_name,
+                role: result.data.role,
+                is_active: result.data.is_active,
+                created_at: result.data.created_at
+              };
+            }
+          } catch (fastError) {
+            console.warn('⚠️ Fast profile query also failed:', fastError);
+            throw new Error('All profile queries failed');
           }
-        } catch (profileError) {
-          console.warn('⚠️ user_profiles query also failed:', profileError);
-          profileCache.current.set(userId, { profile: null, timestamp: Date.now() });
-          return null;
+        } else {
+          throw timeoutError;
         }
       }
 
-      const { data, error } = result;
+      let { data, error } = result;
 
-      if (error || !data) {
-        console.warn('⚠️ Profile query failed:', error);
+      if (error && error.code !== 'PGRST116') {
+        console.error('❌ Profile fetch error:', error);
+        
+        // Only retry on network/temporary errors, not on auth or not-found errors
+        if (attempt < 2 && 
+            !error.message?.includes('timeout') && 
+            !error.message?.includes('JWT') && 
+            !error.message?.includes('not authorized')) {
+          console.log(`🔄 Retrying profile fetch (attempt ${attempt + 1}/2)...`);
+          
+          return new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+              retryTimeouts.current.delete(timeout);
+              resolve(fetchUserProfile(userId, attempt + 1));
+            }, Math.min(1000 * attempt, 2000)); // Shorter backoff
+            retryTimeouts.current.add(timeout);
+          });
+        }
+        
+        // Cache null result to prevent repeated failed requests
         profileCache.current.set(userId, { profile: null, timestamp: Date.now() });
         return null;
       }
 
-      const profile: UserProfile = {
-        id: data.id,
-        email: data.email || `user-${userId}@unknown.com`,
-        username: data.username,
-        full_name: data.full_name,
-        role: data.role || 'viewer',
-        is_active: data.is_active !== false,
-        created_at: data.created_at || new Date().toISOString()
-      };
+      if (data) {
+        // Normalize the data structure and ensure we have an email
+        const profile: UserProfile = {
+          id: data.id,
+          email: data.email || `user-${userId}@unknown.com`, // Fallback email
+          username: data.username,
+          full_name: data.full_name,
+          role: data.role || 'viewer', // Default role if missing
+          is_active: data.is_active !== false, // Default to true if undefined
+          created_at: data.created_at || new Date().toISOString()
+        };
+        
+        // Cache the successful result
+        profileCache.current.set(userId, { profile, timestamp: Date.now() });
+        
+        console.log('✅ User profile fetched successfully:', profile.email, 'Role:', profile.role);
+        return profile;
+      }
+
+      console.log('ℹ️ No user profile data found for:', userId);
       
-      // Cache the result
-      profileCache.current.set(userId, { profile, timestamp: Date.now() });
-      
-      console.log('✅ Profile fetched:', profile.email, 'Role:', profile.role);
-      return profile;
+      // Cache null result
+      profileCache.current.set(userId, { profile: null, timestamp: Date.now() });
+      return null;
 
     } catch (error: any) {
-      console.error('❌ Error fetching profile:', error);
+      console.error('❌ Error in fetchUserProfile:', error);
+      
+      // For production, provide immediate fallback instead of retrying
+      if (window.location.hostname !== 'localhost') {
+        console.log('🏭 Production: Using immediate session fallback');
+        return null; // Will trigger the fallback in handleUserSession
+      }
+      
+      // Don't retry on certain errors
+      if (error.code === 'PGRST116' || 
+          error.message?.includes('JWT') || 
+          error.message?.includes('not authorized')) {
+        console.log('🚫 Not retrying due to specific error');
+        profileCache.current.set(userId, { profile: null, timestamp: Date.now() });
+        return null;
+      }
+      
+      // For timeout errors, don't cache so we can retry later
       return null;
     }
   }, []);
 
-  // OPTIMIZED: Faster session handling
+  // PRODUCTION OPTIMIZED: Faster session handling
   const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false): Promise<void> => {
     const userId = session.user.id;
+    const isProduction = window.location.hostname !== 'localhost';
     
-    // Prevent duplicate processing
-    if (currentUserId.current === userId && isAuthenticated) {
-      console.log('⏭️ Session already processed');
-      setLoading(false);
+    // FIXED: Better duplicate processing prevention
+    if (isProcessingAuth.current && currentUserId.current === userId) {
+      console.log('⏭️ Already processing session for user:', userId);
       return;
     }
 
+    isProcessingAuth.current = true;
     currentUserId.current = userId;
 
     try {
-      console.log('📱 Processing session for:', session.user.email);
+      console.log('📱 Handling user session for:', session.user.email);
       
-      const profile = await fetchUserProfile(userId);
+      // PRODUCTION OPTIMIZATION: Shorter timeout for profile fetch
+      let profile: UserProfile | null = null;
+      
+      if (isProduction) {
+        // Production: Use a promise race with shorter timeout
+        const profilePromise = fetchUserProfile(userId);
+        const sessionTimeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Session handling timeout')), 10000);
+        });
+        
+        try {
+          profile = await Promise.race([profilePromise, sessionTimeoutPromise]);
+        } catch (timeoutError) {
+          console.warn('⚠️ Profile fetch timed out, using fallback');
+          profile = null;
+        }
+      } else {
+        // Development: Normal flow
+        profile = await fetchUserProfile(userId);
+      }
       
       if (profile && profile.is_active) {
         const enhancedUser: AuthUser = {
@@ -183,8 +302,9 @@ export const useAuth = () => {
         setCurrentUser(enhancedUser);
         setUserProfile(profile);
         setIsAuthenticated(true);
+        setLoading(false);
         
-        console.log('✅ Session established for:', profile.email);
+        console.log('✅ User session established successfully for:', profile.email);
         
         if (showWelcome) {
           toast({
@@ -194,21 +314,23 @@ export const useAuth = () => {
         }
         
       } else if (profile && !profile.is_active) {
-        console.log('⛔ User account inactive');
+        console.log('⛔ User account is inactive');
         await handleSignOut(true);
         toast({
           title: 'Account Inactive',
-          description: 'Your account has been deactivated.',
+          description: 'Your account has been deactivated. Please contact an administrator.',
           variant: 'destructive'
         });
         
       } else {
-        // Create fallback profile
+        console.log('❌ No profile found for user:', session.user.email, 'ID:', userId);
+        
+        // FIXED: Create a more complete fallback profile based on session data
         const fallbackProfile: UserProfile = {
           id: userId,
           email: session.user.email || `user-${userId}@unknown.com`,
-          username: session.user.user_metadata?.username || 'unknown',
-          full_name: session.user.user_metadata?.full_name || 'Unknown User',
+          username: session.user.user_metadata?.username || session.user.email?.split('@')[0] || 'unknown',
+          full_name: session.user.user_metadata?.full_name || session.user.user_metadata?.username || 'Unknown User',
           role: (session.user.user_metadata?.role as UserRole) || 'viewer',
           is_active: true,
           created_at: session.user.created_at || new Date().toISOString()
@@ -228,15 +350,22 @@ export const useAuth = () => {
         setCurrentUser(fallbackUser);
         setUserProfile(fallbackProfile);
         setIsAuthenticated(true);
+        setLoading(false);
+        
+        toast({
+          title: 'Profile Missing',
+          description: 'Your user profile is incomplete. Please contact your administrator.',
+          variant: 'destructive'
+        });
       }
       
     } catch (error) {
-      console.error('❌ Error handling session:', error);
+      console.error('❌ Error handling user session:', error);
       
-      // Minimal fallback
-      const errorProfile: UserProfile = {
+      // FIXED: Always provide some form of authentication even on errors
+      const errorFallbackProfile: UserProfile = {
         id: userId,
-        email: session.user.email || 'error@user.com',
+        email: session.user.email || `user-${userId}@unknown.com`,
         username: 'error_user',
         full_name: 'Error User',
         role: 'viewer',
@@ -244,34 +373,69 @@ export const useAuth = () => {
         created_at: new Date().toISOString()
       };
 
+      const errorFallbackUser: AuthUser = {
+        ...session.user,
+        role: 'viewer',
+        username: 'error_user',
+        full_name: 'Error User',
+        is_active: true
+      };
+
       setSession(session);
-      setCurrentUser({ ...session.user, role: 'viewer' });
-      setUserProfile(errorProfile);
+      setCurrentUser(errorFallbackUser);
+      setUserProfile(errorFallbackProfile);
       setIsAuthenticated(true);
+      setLoading(false);
+      
+      toast({
+        title: 'Authentication Warning',
+        description: 'Logged in with limited access due to profile loading error.',
+        variant: 'destructive'
+      });
     } finally {
+      isProcessingAuth.current = false;
       setLoading(false);
     }
-  }, [fetchUserProfile, toast, handleSignOut, isAuthenticated]);
+  }, [fetchUserProfile, toast, handleSignOut]);
 
-  // SIMPLIFIED: Single initialization
   useEffect(() => {
-    if (isInitialized.current) return;
+    if (isInitialized.current) {
+      console.log('⏭️ Auth already initialized, skipping...');
+      return;
+    }
     
     isInitialized.current = true;
-    console.log('🔐 Initializing auth...');
+    console.log('🔐 Initializing auth system...');
+
+    // FIXED: Simplified dev mode cleanup
+    if (window.location.hostname === 'localhost') {
+      console.log('🧹 Development mode: clearing potential auth conflicts...');
+      try {
+        Object.keys(localStorage).forEach(key => {
+          if (key.includes('user_profile_cache') || key.includes('auth_cache')) {
+            localStorage.removeItem(key);
+            console.log('🗑️ Cleared dev cache key:', key);
+          }
+        });
+      } catch (error) {
+        console.warn('⚠️ Dev cache cleanup failed:', error);
+      }
+    }
 
     const initializeAuth = async () => {
       try {
+        setLoading(true);
+        
         const { data: { session }, error } = await supabase.auth.getSession();
 
         if (error) {
-          console.error('❌ Session error:', error);
+          console.error('❌ Error getting session:', error);
           setLoading(false);
           return;
         }
 
         if (session) {
-          console.log('📱 Found session for:', session.user.email);
+          console.log('📱 Found existing session for:', session.user.email);
           await handleUserSession(session, false);
         } else {
           console.log('ℹ️ No session found');
@@ -279,71 +443,114 @@ export const useAuth = () => {
         }
         
       } catch (error) {
-        console.error('❌ Auth initialization error:', error);
+        console.error('❌ Error in auth initialization:', error);
         setLoading(false);
       }
     };
 
     initializeAuth();
 
-    // OPTIMIZED: Better auth state change handling
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('🔄 Auth state changed:', event);
+        console.log('🔄 Auth state changed:', event, 'Session exists:', !!session);
+        
+        // FIXED: Better event handling logic
+        if (isProcessingAuth.current && event !== 'SIGNED_OUT' && event !== 'TOKEN_REFRESHED') {
+          console.log('⏭️ Skipping auth event during processing:', event);
+          return;
+        }
         
         try {
           if (event === 'SIGNED_IN' && session) {
-            await handleUserSession(session, event === 'SIGNED_IN');
+            if (!isAuthenticated || currentUserId.current !== session.user.id) {
+              console.log('🔑 Processing SIGNED_IN event...');
+              await handleUserSession(session, false);
+            } else {
+              console.log('ℹ️ Session already processed for current user');
+              setLoading(false);
+            }
             
           } else if (event === 'SIGNED_OUT') {
-            console.log('🚪 Processing sign out...');
+            console.log('🚪 Processing SIGNED_OUT event...');
             await handleSignOut(true);
             
           } else if (event === 'TOKEN_REFRESHED' && session) {
-            // Just update session without refetching profile
-            setSession(session);
-            setLoading(false);
+            console.log('🔄 Processing TOKEN_REFRESHED event...');
+            
+            // FIXED: For token refresh, just update the session without re-fetching profile
+            if (currentUserId.current === session.user.id && userProfile) {
+              setSession(session);
+              setCurrentUser({
+                ...session.user,
+                role: userProfile.role,
+                username: userProfile.username,
+                full_name: userProfile.full_name,
+                is_active: userProfile.is_active
+              });
+              setLoading(false);
+            } else {
+              // Only re-fetch profile if we don't have one or user changed
+              await handleUserSession(session, false);
+            }
             
           } else {
+            console.log('ℹ️ Unhandled auth event:', event);
             setLoading(false);
           }
           
         } catch (error) {
-          console.error('❌ Auth state change error:', error);
+          console.error('❌ Error in auth state change handler:', error);
           setLoading(false);
         }
       }
     );
 
     return () => {
+      console.log('🧹 Cleaning up auth subscription...');
       subscription.unsubscribe();
     };
-  }, [handleUserSession, handleSignOut]);
+  }, [handleUserSession, handleSignOut, isAuthenticated, userProfile]);
 
   const login = async (email: string, password: string): Promise<boolean> => {
+    if (isProcessingAuth.current) {
+      console.log('⏭️ Login already in progress, skipping...');
+      return false;
+    }
+
     try {
       setLoading(true);
-      console.log('🔐 Logging in:', email);
+      console.log('🔐 Attempting login for:', email);
 
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (error || !data.user || !data.session) {
-        console.error('❌ Login failed:', error);
+      if (error) {
+        console.error('❌ Login error:', error);
         toast({
           title: 'Login Failed',
-          description: error?.message || 'Invalid credentials',
+          description: error.message,
           variant: 'destructive'
         });
         return false;
       }
 
-      console.log('✅ Login successful');
-      await handleUserSession(data.session, true);
-      return true;
+      if (!data.user || !data.session) {
+        console.error('❌ No user data or session returned');
+        toast({
+          title: 'Login Failed',
+          description: 'Invalid response from server',
+          variant: 'destructive'
+        });
+        return false;
+      }
+
+      console.log('✅ Login successful, handling session...');
       
+      await handleUserSession(data.session, true);
+      
+      return true;
     } catch (error) {
       console.error('❌ Login exception:', error);
       toast({
@@ -358,19 +565,31 @@ export const useAuth = () => {
   };
 
   const logout = async (): Promise<void> => {
+    if (isProcessingAuth.current) {
+      console.log('⏭️ Logout already in progress, skipping...');
+      return;
+    }
+
     try {
       console.log('🚪 Logging out...');
       setLoading(true);
+      
       await handleSignOut(false);
+      
     } catch (error) {
-      console.error('❌ Logout error:', error);
+      console.error('❌ Logout exception:', error);
       await handleSignOut(true);
+      toast({
+        title: 'Error',
+        description: 'Failed to log out completely. Please try again.',
+        variant: 'destructive'
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  // Helper functions remain the same...
+  // Helper function to check permissions - PRESERVED EXACTLY
   const hasPermission = (permission: string): boolean => {
     if (!userProfile) return false;
     
@@ -386,7 +605,8 @@ export const useAuth = () => {
         'manage_email_notifications'
       ],
       manager: [
-        'view_users', 'view_earnings', 'manage_machines', 'view_machines',
+        'view_users',
+        'view_earnings', 'manage_machines', 'view_machines',
         'edit_machine_reports', 'manage_venues', 'view_venues',
         'manage_prizes', 'view_inventory', 'manage_stock', 'manage_jobs',
         'view_jobs', 'create_jobs', 'update_job_status', 'view_analytics'
@@ -402,6 +622,36 @@ export const useAuth = () => {
   
     const userPermissions = rolePermissions[userProfile.role] || [];
     return userPermissions.includes('*') || userPermissions.includes(permission);
+  };
+
+  const canManageUsers = (): boolean => {
+    if (!userProfile) return false;
+    return userProfile.role === 'super_admin' || userProfile.role === 'admin';
+  };
+  
+  const canViewUsers = (): boolean => {
+    if (!userProfile) return false;
+    return hasPermission('view_users') || hasPermission('manage_users');
+  };
+  
+  const canDeleteUsers = (): boolean => {
+    if (!userProfile) return false;
+    return userProfile.role === 'super_admin' || (userProfile.role === 'admin' && hasPermission('delete_users'));
+  };
+  
+  const canCreateUserWithRole = (targetRole: string): boolean => {
+    if (!userProfile) return false;
+    
+    const roleHierarchy = {
+      super_admin: ['super_admin', 'admin', 'manager', 'technician', 'viewer'],
+      admin: ['manager', 'technician', 'viewer'],
+      manager: ['technician', 'viewer'],
+      technician: [],
+      viewer: []
+    };
+    
+    const allowedRoles = roleHierarchy[userProfile.role as keyof typeof roleHierarchy] || [];
+    return allowedRoles.includes(targetRole);
   };
 
   const canAccessView = (view: string): boolean => {
@@ -437,20 +687,9 @@ export const useAuth = () => {
     logout,
     hasPermission,
     canAccessView,
-    canManageUsers: () => userProfile?.role === 'super_admin' || userProfile?.role === 'admin',
-    canViewUsers: () => hasPermission('view_users') || hasPermission('manage_users'),
-    canDeleteUsers: () => userProfile?.role === 'super_admin' || (userProfile?.role === 'admin' && hasPermission('delete_users')),
-    canCreateUserWithRole: (targetRole: string) => {
-      if (!userProfile) return false;
-      const roleHierarchy = {
-        super_admin: ['super_admin', 'admin', 'manager', 'technician', 'viewer'],
-        admin: ['manager', 'technician', 'viewer'],
-        manager: ['technician', 'viewer'],
-        technician: [],
-        viewer: []
-      };
-      const allowedRoles = roleHierarchy[userProfile.role as keyof typeof roleHierarchy] || [];
-      return allowedRoles.includes(targetRole);
-    }
+    canManageUsers,
+    canViewUsers,
+    canDeleteUsers,
+    canCreateUserWithRole
   };
 };

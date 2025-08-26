@@ -65,6 +65,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
   useEffect(() => {
     const handleMachineProblemsUpdate = () => {
       console.log('🔄 Machine problems updated, recalculating business health...');
+      // Delay to allow database updates to complete
       setTimeout(() => {
         fetchDashboardData();
       }, 1000);
@@ -106,8 +107,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
         .select('status, created_at')
         .gte('created_at', thirtyDaysAgo.toISOString());
 
-      if (reportsError) console.warn('Reports error:', reportsError);
-      if (prevError) console.warn('Previous reports error:', prevError);
+      if (reportsError) console.error('Reports error:', reportsError);
+      if (prevError) console.error('Previous reports error:', prevError);
       if (jobsError) console.warn('Jobs error (table may not exist):', jobsError);
 
       // Calculate statistics
@@ -145,7 +146,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
         loading: false
       });
 
-      // Calculate business health
+      // Calculate business health (now async)
       await calculateBusinessHealth({
         machineUptime,
         lowStockAlerts,
@@ -171,20 +172,52 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
     const issues: string[] = [];
     const improvements: string[] = [];
 
-    // FIXED: Get dismissed alerts safely without requiring alerts table
+    // Get count of active (non-dismissed) machine problem alerts with enhanced checking
     let activeMachineProblems = 0;
     try {
-      // Try to get dismissed alerts from machine_problems table if it exists
-      const { data: dismissedAlerts, error } = await supabase
-        .from('machine_problems')
-        .select('machine_id, problem_type')
-        .not('dismissed_at', 'is', null);
+      // Get dismissed alerts from multiple sources
+      const dismissedAlertsPromises = [
+        supabase.from('machine_problems').select('machine_id, problem_type').not('dismissed_at', 'is', null),
+        Promise.resolve({ data: [] }) // Fallback for localStorage
+      ];
 
-      const dismissedSet = new Set(
-        dismissedAlerts?.map(d => `${d.machine_id}_${d.problem_type}`) || []
-      );
+      // Add localStorage fallback
+      try {
+        const localDismissed = localStorage.getItem('dismissedMachineAlerts');
+        if (localDismissed) {
+          const dismissedList = JSON.parse(localDismissed);
+          dismissedAlertsPromises[1] = Promise.resolve({ 
+            data: dismissedList.map((key: string) => {
+              const [machine_id, problem_type] = key.split('_');
+              return { machine_id, problem_type };
+            })
+          });
+        }
+      } catch (e) {
+        // Ignore localStorage errors
+      }
 
-      // Check for recently completed jobs (within last 7 days)
+      const [dbResult, localResult] = await Promise.all(dismissedAlertsPromises);
+      
+      // Combine dismissed alerts from both sources
+      const allDismissedAlerts = [
+        ...(dbResult.data || []),
+        ...(localResult.data || [])
+      ];
+
+      const { data, error } = await supabase
+        .from('alerts')
+        .select();
+
+      if (error && error.code !== 'PGRST116') {
+        console.warn('Could not load dismissed alerts:', error);
+      }
+
+      // Count machine problems (high parts usage) that aren't dismissed
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+
+      // Check for recently completed jobs (within last 7 days) that might resolve issues
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
       const { data: recentJobs } = await supabase
         .from('jobs')
@@ -193,10 +226,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
         .gte('created_at', sevenDaysAgo.toISOString());
 
       const recentlyServicedMachines = new Set(recentJobs?.map(job => job.machine_id) || []);
-
-      // Count machine problems (high parts usage)
-      const twelveMonthsAgo = new Date();
-      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
       const { data: machinePartsData } = await supabase
         .from('machine_parts')
@@ -211,6 +240,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
         });
 
         // Count machines with 3+ parts that aren't dismissed and weren't recently serviced
+        const dismissedSet = new Set(
+          allDismissedAlerts.map(d => `${d.machine_id}_${d.problem_type}`)
+        );
+
         machineUsageMap.forEach((partCount, machineId) => {
           const alertKey = `${machineId}_parts_usage`;
           const isDismissed = dismissedSet.has(alertKey);
@@ -222,7 +255,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
         });
       }
     } catch (error) {
-      console.warn('Error calculating machine problems (this is normal if tables don\'t exist):', error);
+      console.warn('Error calculating machine problems for health score:', error);
       // Fallback to estimating based on machines needing maintenance
       activeMachineProblems = machines.filter(m => m.status === 'maintenance').length;
     }
@@ -241,7 +274,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
       improvements.push('Restock low inventory items');
     }
 
-    // Active machine problems impact (20% of score)
+    // Active machine problems impact (20% of score) - only count non-dismissed alerts
     if (activeMachineProblems > 0) {
       score -= Math.min(activeMachineProblems * 5, 20);
       issues.push(`${activeMachineProblems} machines with high maintenance needs`);
@@ -324,6 +357,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
     }
   };
 
+  // FIXED: Always use white background regardless of status
   const getHealthBackground = (status: BusinessHealth['status']) => {
     return 'bg-white border-gray-200';
   };
@@ -349,7 +383,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
         </div>
       </div>
 
-      {/* Business Health Score */}
+      {/* Business Health Score - FIXED: White background always */}
       <Card className={`${getHealthBackground(businessHealth.status)} border-2`}>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
@@ -430,8 +464,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
         </CardContent>
       </Card>
 
-      {/* Machine Problems Alert - Only show if component exists */}
-      {typeof MachineProblemsTracker !== 'undefined' && <MachineProblemsTracker />}
+      {/* Machine Problems Alert */}
+      <MachineProblemsTracker />
 
       {/* Key Performance Indicators */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -684,7 +718,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
                 </div>
                 <div className="flex justify-between text-sm">
                   <span>Urgent Jobs</span>
-                  <Badge variant="destructive">0</Badge>
+                  <Badge variant="destructive">
+                    {/* This would need to be calculated from jobs with urgent priority */}
+                    0
+                  </Badge>
                 </div>
               </div>
             </div>

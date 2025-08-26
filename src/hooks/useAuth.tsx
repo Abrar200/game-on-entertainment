@@ -46,60 +46,96 @@ export const useAuth = () => {
     }
   }, []);
 
-  // SIMPLIFIED: Single source of truth for profile fetching
-  const fetchUserProfile = useCallback(async (userId: string, userEmail: string): Promise<UserProfile | null> => {
-    try {
-      console.log('Fetching profile for:', userId);
+  // IMMEDIATE RESPONSE: Create instant profile from session, then fetch real data in background
+  const fetchUserProfile = useCallback(async (userId: string, userEmail: string): Promise<UserProfile> => {
+    // Create immediate fallback profile for instant UI response
+    const immediateProfile: UserProfile = {
+      id: userId,
+      email: userEmail,
+      username: userEmail.split('@')[0] || 'user',
+      full_name: 'User',
+      role: 'viewer', // Safe default that won't break permissions
+      is_active: true,
+      created_at: new Date().toISOString()
+    };
 
-      // Try users table first (primary source)
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('id, email, username, full_name, role, is_active, created_at')
-        .eq('id', userId)
-        .single();
+    // Return immediate profile right away
+    setTimeout(async () => {
+      try {
+        console.log('Background: Fetching actual profile for:', userId);
 
-      if (userData && !userError) {
-        console.log('Profile found in users table');
-        return {
-          id: userData.id,
-          email: userData.email,
-          username: userData.username,
-          full_name: userData.full_name,
-          role: userData.role as UserRole || 'viewer',
-          is_active: userData.is_active !== false,
-          created_at: userData.created_at || new Date().toISOString()
-        };
+        // Try users table first (primary source)
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('id, email, username, full_name, role, is_active, created_at')
+          .eq('id', userId)
+          .single();
+
+        if (userData && !userError) {
+          console.log('Background: Profile found in users table');
+          const actualProfile: UserProfile = {
+            id: userData.id,
+            email: userData.email,
+            username: userData.username,
+            full_name: userData.full_name,
+            role: userData.role as UserRole || 'viewer',
+            is_active: userData.is_active !== false,
+            created_at: userData.created_at || new Date().toISOString()
+          };
+          
+          // Update states with actual profile data
+          setUserProfile(actualProfile);
+          setCurrentUser(prev => prev ? {
+            ...prev,
+            role: actualProfile.role,
+            username: actualProfile.username,
+            full_name: actualProfile.full_name,
+            is_active: actualProfile.is_active
+          } : null);
+          return;
+        }
+
+        // Fallback to user_profiles table
+        const { data: profileData, error: profileError } = await supabase
+          .from('user_profiles')
+          .select('user_id, username, full_name, role, is_active, created_at')
+          .eq('user_id', userId)
+          .single();
+
+        if (profileData && !profileError) {
+          console.log('Background: Profile found in user_profiles table');
+          const actualProfile: UserProfile = {
+            id: profileData.user_id,
+            email: userEmail,
+            username: profileData.username,
+            full_name: profileData.full_name,
+            role: profileData.role as UserRole || 'viewer',
+            is_active: profileData.is_active !== false,
+            created_at: profileData.created_at || new Date().toISOString()
+          };
+          
+          // Update states with actual profile data
+          setUserProfile(actualProfile);
+          setCurrentUser(prev => prev ? {
+            ...prev,
+            role: actualProfile.role,
+            username: actualProfile.username,
+            full_name: actualProfile.full_name,
+            is_active: actualProfile.is_active
+          } : null);
+          return;
+        }
+
+        console.warn('Background: No profile found in either table, keeping fallback');
+      } catch (error) {
+        console.error('Background: Error fetching user profile:', error);
       }
+    }, 0);
 
-      // Fallback to user_profiles table
-      const { data: profileData, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('user_id, username, full_name, role, is_active, created_at')
-        .eq('user_id', userId)
-        .single();
-
-      if (profileData && !profileError) {
-        console.log('Profile found in user_profiles table');
-        return {
-          id: profileData.user_id,
-          email: userEmail,
-          username: profileData.username,
-          full_name: profileData.full_name,
-          role: profileData.role as UserRole || 'viewer',
-          is_active: profileData.is_active !== false,
-          created_at: profileData.created_at || new Date().toISOString()
-        };
-      }
-
-      console.warn('No profile found in either table');
-      return null;
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      return null;
-    }
+    return immediateProfile;
   }, []);
 
-  // SIMPLIFIED: Synchronous session handling
+  // IMMEDIATE RESPONSE: Set UI state instantly, then upgrade in background
   const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false): Promise<void> => {
     if (isProcessingAuth.current) {
       console.log('Auth already processing, skipping...');
@@ -109,35 +145,12 @@ export const useAuth = () => {
     isProcessingAuth.current = true;
     
     try {
-      setLoading(true);
       console.log('Processing session for:', session.user.email);
       
-      // Fetch profile synchronously
+      // IMMEDIATE: Get instant profile for fast UI response
       const profile = await fetchUserProfile(session.user.id, session.user.email || '');
       
-      if (!profile) {
-        console.error('Failed to fetch user profile');
-        await handleSignOut();
-        toast({
-          title: 'Profile Error',
-          description: 'Unable to load user profile. Please try again.',
-          variant: 'destructive'
-        });
-        return;
-      }
-
-      if (!profile.is_active) {
-        console.log('User account is inactive');
-        await handleSignOut();
-        toast({
-          title: 'Account Inactive',
-          description: 'Your account has been deactivated.',
-          variant: 'destructive'
-        });
-        return;
-      }
-
-      // Set all states at once to avoid race conditions
+      // Set all states immediately with the instant profile
       const authUser: AuthUser = {
         ...session.user,
         role: profile.role,
@@ -159,7 +172,8 @@ export const useAuth = () => {
         });
       }
 
-      console.log('Session processing complete');
+      console.log('Session processing complete with immediate response');
+      // Background profile fetch already started in fetchUserProfile
       
     } catch (error) {
       console.error('Error handling user session:', error);
@@ -172,7 +186,7 @@ export const useAuth = () => {
     } finally {
       isProcessingAuth.current = false;
     }
-  }, [fetchUserProfile, toast, handleSignOut]);
+  }, [fetchUserProfile, toast]);
 
   useEffect(() => {
     const initializeAuth = async () => {

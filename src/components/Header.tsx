@@ -213,6 +213,13 @@ const Header: React.FC<HeaderProps> = ({
                     Parts
                   </DropdownMenuItem>
                 )}
+                {/* View Reports - Only for Admins and Super Admins */}
+                {(hasPermission('view_financial_reports') || hasPermission('view_earnings')) && (
+                  <DropdownMenuItem onClick={createNavHandler('view-reports', 'View Reports')}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    View Reports
+                  </DropdownMenuItem>
+                )}
                 {canAccessView('users') && (
                   <DropdownMenuItem onClick={createNavHandler('users', 'Users')}>
                     <Users className="h-4 w-4 mr-2" />

@@ -213,7 +213,10 @@ export const useAuth = () => {
         console.log('Auth state changed:', event);
         
         if (event === 'SIGNED_IN' && session) {
-          await handleUserSession(session, true);
+          // Only handle if not already processing (to avoid duplicate processing during login)
+          if (!isProcessingAuth.current) {
+            await handleUserSession(session, false);
+          }
         } else if (event === 'SIGNED_OUT') {
           setSession(null);
           setCurrentUser(null);
@@ -267,8 +270,9 @@ export const useAuth = () => {
         return false;
       }
 
-      // Session will be handled by the auth state change listener
-      console.log('Login successful');
+      // Handle session directly in login instead of waiting for auth state change
+      console.log('Login successful, processing session...');
+      await handleUserSession(data.session, true);
       return true;
       
     } catch (error) {

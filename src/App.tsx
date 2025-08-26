@@ -64,36 +64,8 @@ const AppContent = () => {
 
   // CRITICAL: Production-optimized app initialization
   useEffect(() => {
-    if (initializationStarted.current) {
-      return;
-    }
-    
-    initializationStarted.current = true;
-
-    const initializeApp = async () => {
-      try {
-        console.log('🚀 Initializing app...');
-        
-        // Wait for Supabase connection in production
-        if (isProduction) {
-          console.log('🌐 Waiting for database connection...');
-          await waitForSupabaseConnection(3, 1000);
-        } else {
-          // Simple delay for development
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-        
-        setAppReady(true);
-        console.log('✅ App initialized');
-        
-      } catch (error) {
-        console.error('❌ App initialization error:', error);
-        setAppReady(true); // Still show the app even if init fails
-      }
-    };
-
-    initializeApp();
-  }, [isProduction]);
+    setAppReady(true); // Just mark as ready immediately
+  }, []);
 
   // Enhanced login handler with better error handling
   const handleLogin = async (email: string, password: string): Promise<boolean> => {

@@ -205,14 +205,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
         ...(localResult.data || [])
       ];
 
-      const { data, error } = await supabase
-        .from('alerts')
-        .select();
-
-      if (error && error.code !== 'PGRST116') {
-        console.warn('Could not load dismissed alerts:', error);
-      }
-
       // Count machine problems (high parts usage) that aren't dismissed
       const twelveMonthsAgo = new Date();
       twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);

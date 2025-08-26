@@ -1,4 +1,4 @@
-// src/hooks/useAuth.tsx - OPTIMIZED VERSION
+// src/hooks/useAuth.tsx - SIMPLIFIED VERSION
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -33,7 +33,6 @@ export const useAuth = () => {
   
   const isProcessingAuth = useRef(false);
 
-  // Simple sign out function
   const handleSignOut = useCallback(async (): Promise<void> => {
     try {
       await supabase.auth.signOut();
@@ -47,184 +46,144 @@ export const useAuth = () => {
     }
   }, []);
 
-  const fetchUserProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
+  // SIMPLIFIED: Single source of truth for profile fetching
+  const fetchUserProfile = useCallback(async (userId: string, userEmail: string): Promise<UserProfile | null> => {
     try {
-      // FIRST: Try to get immediate session data for fast fallback
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      
-      if (!currentSession) return null;
-      
-      // Create immediate fallback profile for fast response
-      const immediateFallback: UserProfile = {
-        id: userId,
-        email: currentSession.user.email || '',
-        username: currentSession.user.email?.split('@')[0] || 'user',
-        full_name: currentSession.user.user_metadata?.full_name || 'User',
-        role: (currentSession.user.user_metadata?.role as UserRole) || 'viewer',
-        is_active: true,
-        created_at: new Date().toISOString()
-      };
-      
-      // Return fallback immediately for fast UI response
-      // The actual DB query will happen in the background
-      setTimeout(async () => {
-        try {
-          // Try users table
-          const { data, error } = await supabase
-            .from('users')
-            .select('id, email, username, full_name, role, is_active, created_at')
-            .eq('id', userId)
-            .maybeSingle();
+      console.log('Fetching profile for:', userId);
 
-          if (error || !data) {
-            // Fallback to user_profiles
-            const { data: profileData } = await supabase
-              .from('user_profiles')
-              .select('user_id, username, full_name, role, is_active, created_at')
-              .eq('user_id', userId)
-              .maybeSingle();
+      // Try users table first (primary source)
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('id, email, username, full_name, role, is_active, created_at')
+        .eq('id', userId)
+        .single();
 
-            if (profileData) {
-              const actualProfile: UserProfile = {
-                id: profileData.user_id,
-                email: currentSession.user.email || '',
-                username: profileData.username,
-                full_name: profileData.full_name,
-                role: profileData.role as UserRole || 'viewer',
-                is_active: profileData.is_active !== false,
-                created_at: profileData.created_at || new Date().toISOString()
-              };
-              
-              // Update with actual profile data
-              setUserProfile(actualProfile);
-              setCurrentUser(prev => prev ? {
-                ...prev,
-                role: actualProfile.role,
-                username: actualProfile.username,
-                full_name: actualProfile.full_name,
-                is_active: actualProfile.is_active
-              } : null);
-            }
-          } else if (data) {
-            const actualProfile: UserProfile = {
-              id: data.id,
-              email: data.email,
-              username: data.username,
-              full_name: data.full_name,
-              role: data.role as UserRole || 'viewer',
-              is_active: data.is_active !== false,
-              created_at: data.created_at || new Date().toISOString()
-            };
-            
-            // Update with actual profile data
-            setUserProfile(actualProfile);
-            setCurrentUser(prev => prev ? {
-              ...prev,
-              role: actualProfile.role,
-              username: actualProfile.username,
-              full_name: actualProfile.full_name,
-              is_active: actualProfile.is_active
-            } : null);
-          }
-        } catch (error) {
-          console.error('Background profile fetch error:', error);
-        }
-      }, 0);
-      
-      return immediateFallback;
-      
+      if (userData && !userError) {
+        console.log('Profile found in users table');
+        return {
+          id: userData.id,
+          email: userData.email,
+          username: userData.username,
+          full_name: userData.full_name,
+          role: userData.role as UserRole || 'viewer',
+          is_active: userData.is_active !== false,
+          created_at: userData.created_at || new Date().toISOString()
+        };
+      }
+
+      // Fallback to user_profiles table
+      const { data: profileData, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('user_id, username, full_name, role, is_active, created_at')
+        .eq('user_id', userId)
+        .single();
+
+      if (profileData && !profileError) {
+        console.log('Profile found in user_profiles table');
+        return {
+          id: profileData.user_id,
+          email: userEmail,
+          username: profileData.username,
+          full_name: profileData.full_name,
+          role: profileData.role as UserRole || 'viewer',
+          is_active: profileData.is_active !== false,
+          created_at: profileData.created_at || new Date().toISOString()
+        };
+      }
+
+      console.warn('No profile found in either table');
+      return null;
     } catch (error) {
-      console.error('Error in fetchUserProfile:', error);
+      console.error('Error fetching user profile:', error);
       return null;
     }
   }, []);
 
+  // SIMPLIFIED: Synchronous session handling
   const handleUserSession = useCallback(async (session: Session, showWelcome: boolean = false): Promise<void> => {
-    if (isProcessingAuth.current) return;
+    if (isProcessingAuth.current) {
+      console.log('Auth already processing, skipping...');
+      return;
+    }
     
     isProcessingAuth.current = true;
     
     try {
       setLoading(true);
+      console.log('Processing session for:', session.user.email);
       
-      // Create immediate session response for fast UI
-      const immediateUser: AuthUser = {
+      // Fetch profile synchronously
+      const profile = await fetchUserProfile(session.user.id, session.user.email || '');
+      
+      if (!profile) {
+        console.error('Failed to fetch user profile');
+        await handleSignOut();
+        toast({
+          title: 'Profile Error',
+          description: 'Unable to load user profile. Please try again.',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      if (!profile.is_active) {
+        console.log('User account is inactive');
+        await handleSignOut();
+        toast({
+          title: 'Account Inactive',
+          description: 'Your account has been deactivated.',
+          variant: 'destructive'
+        });
+        return;
+      }
+
+      // Set all states at once to avoid race conditions
+      const authUser: AuthUser = {
         ...session.user,
-        role: (session.user.user_metadata?.role as UserRole) || 'viewer',
-        username: session.user.email?.split('@')[0] || 'user',
-        full_name: session.user.user_metadata?.full_name || 'User',
-        is_active: true
-      };
-      
-      const immediateProfile: UserProfile = {
-        id: session.user.id,
-        email: session.user.email || '',
-        username: immediateUser.username,
-        full_name: immediateUser.full_name,
-        role: immediateUser.role as UserRole,
-        is_active: true,
-        created_at: new Date().toISOString()
+        role: profile.role,
+        username: profile.username,
+        full_name: profile.full_name,
+        is_active: profile.is_active
       };
 
       setSession(session);
-      setCurrentUser(immediateUser);
-      setUserProfile(immediateProfile);
+      setCurrentUser(authUser);
+      setUserProfile(profile);
       setIsAuthenticated(true);
       setLoading(false);
 
-      // Fetch actual profile in background
-      setTimeout(async () => {
-        try {
-          const profile = await fetchUserProfile(session.user.id);
-          
-          if (profile) {
-            setUserProfile(profile);
-            setCurrentUser(prev => prev ? {
-              ...prev,
-              role: profile.role,
-              username: profile.username,
-              full_name: profile.full_name,
-              is_active: profile.is_active
-            } : null);
-            
-            if (showWelcome) {
-              toast({
-                title: 'Success',
-                description: `Welcome back, ${profile.full_name || profile.username || 'User'}!`
-              });
-            }
-            
-            if (!profile.is_active) {
-              console.log('User account is inactive');
-              await handleSignOut();
-              toast({
-                title: 'Account Inactive',
-                description: 'Your account has been deactivated.',
-                variant: 'destructive'
-              });
-            }
-          }
-        } catch (error) {
-          console.error('Background profile update error:', error);
-        }
-      }, 0);
+      if (showWelcome) {
+        toast({
+          title: 'Success',
+          description: `Welcome back, ${profile.full_name || profile.username || 'User'}!`
+        });
+      }
+
+      console.log('Session processing complete');
       
     } catch (error) {
       console.error('Error handling user session:', error);
       setLoading(false);
+      toast({
+        title: 'Authentication Error',
+        description: 'Failed to authenticate user. Please try again.',
+        variant: 'destructive'
+      });
     } finally {
       isProcessingAuth.current = false;
     }
   }, [fetchUserProfile, toast, handleSignOut]);
 
   useEffect(() => {
-    // Get initial session
     const initializeAuth = async () => {
       try {
+        console.log('Initializing auth...');
         const { data: { session } } = await supabase.auth.getSession();
+        
         if (session) {
           await handleUserSession(session, false);
         } else {
+          console.log('No active session found');
           setLoading(false);
         }
       } catch (error) {
@@ -235,9 +194,10 @@ export const useAuth = () => {
 
     initializeAuth();
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log('Auth state changed:', event);
+        
         if (event === 'SIGNED_IN' && session) {
           await handleUserSession(session, true);
         } else if (event === 'SIGNED_OUT') {
@@ -247,7 +207,7 @@ export const useAuth = () => {
           setIsAuthenticated(false);
           setLoading(false);
         } else if (event === 'TOKEN_REFRESHED' && session) {
-          // Just update the session without re-fetching profile
+          // Only update session, keep existing profile
           setSession(session);
         }
       }
@@ -258,7 +218,7 @@ export const useAuth = () => {
 
   const login = async (email: string, password: string): Promise<boolean> => {
     if (isProcessingAuth.current) {
-      console.log('Login already in progress, skipping...');
+      console.log('Login already in progress');
       return false;
     }
 
@@ -293,9 +253,10 @@ export const useAuth = () => {
         return false;
       }
 
-      console.log('Login successful, handling session...');
-      await handleUserSession(data.session, true);
+      // Session will be handled by the auth state change listener
+      console.log('Login successful');
       return true;
+      
     } catch (error) {
       console.error('Login exception:', error);
       toast({
@@ -312,7 +273,7 @@ export const useAuth = () => {
 
   const logout = async (): Promise<void> => {
     if (isProcessingAuth.current) {
-      console.log('Logout already in progress, skipping...');
+      console.log('Logout already in progress');
       return;
     }
 

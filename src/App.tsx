@@ -226,7 +226,6 @@ const AppContent = () => {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
       <div className="text-center">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-red-600 mx-auto"></div>
-        <p className="mt-4 text-red-600">Unexpected state. Please refresh the page.</p>
         <button 
           onClick={() => window.location.reload()} 
           className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"

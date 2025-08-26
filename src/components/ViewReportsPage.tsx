@@ -1,5 +1,3 @@
-// src/components/ViewReportsPage.tsx
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,9 +6,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAppContext } from '@/contexts/AppContext';
 import { supabase } from '@/lib/supabase';
-import { Building2, FileText, QrCode, Search, Filter, RefreshCw, Download, Check, X, AlertCircle } from 'lucide-react';
+import { Building2, FileText, QrCode, Search, Calendar, Filter, RefreshCw, Download, Printer, Check, X, Eye, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import AutoBarcodeScanner from '@/components/AutoBarcodeScanner';
 
@@ -85,6 +84,8 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
   
   // Scanner state
   const [showScanner, setShowScanner] = useState(false);
+  const [selectedReportForPDF, setSelectedReportForPDF] = useState<any>(null);
+  const [showPDFDialog, setShowPDFDialog] = useState(false);
 
   // Permission check
   if (!hasPermission('view_financial_reports') && !hasPermission('view_earnings')) {
@@ -322,6 +323,7 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
 
     if (type === 'machine') {
       const venue = venues.find(v => v.id === report.venue_id);
+      const machine = machines.find(m => m.id === report.machine_id);
       
       htmlContent = `
         <!DOCTYPE html>
@@ -373,7 +375,7 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
             <h3>Financial Summary</h3>
             <div class="stat-item">
               <span class="stat-label">Money Collected:</span>
-              <span class="stat-value">${report.money_collected.toFixed(2)}</span>
+              <span class="stat-value">$${report.money_collected.toFixed(2)}</span>
             </div>
             <div class="stat-item">
               <span class="stat-label">Tokens in Game:</span>
@@ -443,7 +445,7 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
             <h3>Financial Summary</h3>
             <div class="stat-item">
               <span class="stat-label">Total Revenue:</span>
-              <span class="stat-value">${report.total_revenue.toFixed(2)}</span>
+              <span class="stat-value">$${report.total_revenue.toFixed(2)}</span>
             </div>
             <div class="stat-item">
               <span class="stat-label">Commission Rate:</span>
@@ -460,7 +462,7 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
           </div>
 
           <div class="commission-highlight">
-            <h3>Commission Due: ${report.venue_commission_amount.toFixed(2)}</h3>
+            <h3>Commission Due: $${report.venue_commission_amount.toFixed(2)}</h3>
             <p>Payment Status: ${report.paid_status ? 'PAID ✓' : 'PENDING PAYMENT'}</p>
           </div>
         </body>

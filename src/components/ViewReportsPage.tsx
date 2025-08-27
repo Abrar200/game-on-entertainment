@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { Building2, FileText, QrCode, Search, Calendar, Filter, RefreshCw, Download, Printer, Check, X, Eye, AlertCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import AutoBarcodeScanner from '@/components/AutoBarcodeScanner';
+import { VenueReportTemplate, type MachineReportData } from '@/components/VenueReportTemplate';
 
 interface MachineReport {
   id: string;
@@ -84,8 +85,6 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
   
   // Scanner state
   const [showScanner, setShowScanner] = useState(false);
-  const [selectedReportForPDF, setSelectedReportForPDF] = useState<any>(null);
-  const [showPDFDialog, setShowPDFDialog] = useState(false);
 
   // Permission check
   if (!hasPermission('view_financial_reports') && !hasPermission('view_earnings')) {
@@ -317,158 +316,225 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
     }
   };
 
-  // Generate report PDF
-  const generateReportPDF = (report: any, type: 'machine' | 'venue') => {
-    let htmlContent = '';
-
-    if (type === 'machine') {
-      const venue = venues.find(v => v.id === report.venue_id);
-      const machine = machines.find(m => m.id === report.machine_id);
-      
-      htmlContent = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Machine Report - ${report.machine_name}</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; background: white; }
-            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #dc2626; padding-bottom: 20px; }
-            .logo { width: 120px; height: 70px; object-fit: contain; margin-bottom: 10px; }
-            .company-name { font-size: 18px; font-weight: bold; color: #dc2626; margin: 0; }
-            .title { color: #dc2626; font-size: 28px; margin: 10px 0; }
-            .info-section { margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; }
-            .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
-            .stat-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
-            .stat-item:last-child { border-bottom: none; }
-            .stat-label { font-weight: bold; }
-            .stat-value { color: #dc2626; font-weight: bold; }
-            .payment-status { text-align: center; padding: 15px; margin: 20px 0; border-radius: 8px; font-weight: bold; }
-            .paid { background: #e8f5e8; color: #2e7d32; border: 2px solid #4caf50; }
-            .unpaid { background: #fff3cd; color: #f57c00; border: 2px solid #ffc107; }
-            @media print { .no-print { display: none !important; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            ${companyLogo ? `<img src="${companyLogo}" class="logo" alt="Company Logo" />` : ''}
+  // Generate Machine Report PDF using consistent template
+  const generateMachineReportPDF = (report: MachineReport) => {
+    const venue = venues.find(v => v.id === report.venue_id);
+    const machine = machines.find(m => m.id === report.machine_id) || {
+      name: report.machine_name,
+      serial_number: report.machine_serial,
+      type: report.machine_type
+    };
+    
+    const totalCashPaywave = report.money_collected;
+    const tokensInMachine = report.tokens_in_game || 0;
+    const totalGameRevenue = totalCashPaywave;
+    const venueCommissionPercent = venue?.commission_percentage || 30;
+    const venueCommissionAmount = totalGameRevenue * (venueCommissionPercent / 100);
+    
+    // Use consistent styling with the existing machine report template from MachineReportViewer
+    const logoElement = companyLogo ? 
+      `<img src="${companyLogo}" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />` :
+      `<img src="/images/logo.jpg" alt="Game On Entertainment Logo" class="logo" style="width: 140px; height: 80px; object-fit: contain; margin-bottom: 5px;" />`;
+    
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Machine Report - ${machine.name || 'Unknown'}</title>
+        <style>
+          @page { size: A4; margin: 15mm; }
+          body { 
+            font-family: 'Arial', sans-serif; 
+            margin: 0; 
+            padding: 15px;
+            line-height: 1.4;
+            color: #000;
+            background: #fff;
+            font-size: 14px;
+            font-weight: bold;
+          }
+          .header { 
+            position: relative;
+            text-align: center; 
+            margin-bottom: 20px; 
+            border-bottom: 2px solid #dc2626; 
+            padding-bottom: 15px; 
+          }
+          .company-branding {
+            position: absolute;
+            top: 0;
+            right: 0;
+            text-align: right;
+            width: 200px;
+          }
+          .company-name {
+            font-size: 16px;
+            font-weight: bold;
+            color: #dc2626;
+            margin: 0;
+          }
+          .header h1 { 
+            color: #dc2626; 
+            margin: 0 0 8px 0;
+            font-size: 22px;
+            font-weight: bold;
+          }
+          .machine-info {
+            margin: 15px 0;
+            text-align: center;
+            font-size: 13px;
+            font-weight: bold;
+          }
+          .metrics-list {
+            background: #fff;
+            border: 2px solid #000;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 15px 0;
+          }
+          .metric-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #000;
+            font-size: 14px;
+            font-weight: bold;
+          }
+          .metric-item:last-child {
+            border-bottom: none;
+          }
+          .metric-label {
+            font-weight: bold;
+            color: #000;
+          }
+          .metric-value {
+            font-weight: bold;
+            color: #dc2626;
+            font-size: 16px;
+          }
+          .commission-notice {
+            background: #f8f8f8;
+            border: 2px solid #dc2626;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+            font-weight: bold;
+            color: #000;
+            font-size: 13px;
+          }
+          .token-notice {
+            background: #e0f2fe;
+            border: 2px solid #0288d1;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 15px 0;
+            text-align: center;
+            font-weight: bold;
+            color: #01579b;
+            font-size: 12px;
+          }
+          .payment-status {
+            background: ${report.paid_status ? '#e8f5e8' : '#fff3cd'};
+            border: 2px solid ${report.paid_status ? '#4caf50' : '#ffc107'};
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+            font-weight: bold;
+            color: ${report.paid_status ? '#2e7d32' : '#f57c00'};
+            font-size: 14px;
+          }
+          .footer {
+            margin-top: 25px;
+            text-align: center;
+            font-size: 11px;
+            color: #000;
+            border-top: 1px solid #000;
+            padding-top: 15px;
+            font-weight: bold;
+          }
+          @media print { 
+            button { display: none !important; }
+            .no-print { display: none !important; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="company-branding">
+            ${logoElement}
             <p class="company-name">Game On Entertainment</p>
-            <h1 class="title">Machine Report</h1>
+          </div>
+          <h1>Machine Report</h1>
+          <div class="machine-info">
+            <p><strong>Machine:</strong> ${machine.name || 'Unknown Machine'}</p>
+            <p><strong>Serial Number:</strong> ${machine.serial_number || 'N/A'}</p>
+            <p><strong>Venue:</strong> ${venue?.name || 'Unknown Venue'}</p>
+            <p><strong>Address:</strong> ${venue?.address || 'N/A'}</p>
+            <p><strong>Report Date:</strong> ${new Date(report.report_date).toLocaleDateString()}</p>
+          </div>
+        </div>
+        
+        <div class="metrics-list">
+          <div class="metric-item">
+            <span class="metric-label">Total Cash / Paywave in Machine:</span>
+            <span class="metric-value">$${totalCashPaywave.toFixed(2)}</span>
           </div>
           
-          <div class="info-section">
-            <h3>Machine Information</h3>
-            <div class="info-grid">
-              <div>
-                <strong>Machine:</strong> ${report.machine_name}<br>
-                <strong>Type:</strong> ${report.machine_type}<br>
-                <strong>Serial:</strong> ${report.machine_serial}
-              </div>
-              <div>
-                <strong>Venue:</strong> ${venue?.name || 'Unknown'}<br>
-                <strong>Report Date:</strong> ${new Date(report.report_date).toLocaleDateString()}<br>
-                <strong>Generated:</strong> ${new Date().toLocaleDateString()}
-              </div>
-            </div>
-          </div>
-
-          <div class="info-section">
-            <h3>Financial Summary</h3>
-            <div class="stat-item">
-              <span class="stat-label">Money Collected:</span>
-              <span class="stat-value">$${report.money_collected.toFixed(2)}</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-label">Tokens in Game:</span>
-              <span class="stat-value">${report.tokens_in_game || 0}</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-label">Toys Dispensed:</span>
-              <span class="stat-value">${report.toys_dispensed || 0}</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-label">Current Toy Count:</span>
-              <span class="stat-value">${report.current_toy_count || 0}</span>
-            </div>
-          </div>
-
-          ${report.notes ? `
-            <div class="info-section">
-              <h3>Notes</h3>
-              <p>${report.notes}</p>
-            </div>
-          ` : ''}
-
-          <div class="payment-status ${report.paid_status ? 'paid' : 'unpaid'}">
-            Payment Status: ${report.paid_status ? 'PAID ✓' : 'PENDING PAYMENT'}
-          </div>
-        </body>
-        </html>
-      `;
-    } else {
-      // Venue report PDF
-      htmlContent = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Venue Report - ${report.venue_name}</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; background: white; }
-            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #dc2626; padding-bottom: 20px; }
-            .logo { width: 120px; height: 70px; object-fit: contain; margin-bottom: 10px; }
-            .company-name { font-size: 18px; font-weight: bold; color: #dc2626; margin: 0; }
-            .title { color: #dc2626; font-size: 28px; margin: 10px 0; }
-            .info-section { margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; }
-            .stat-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
-            .stat-item:last-child { border-bottom: none; }
-            .stat-label { font-weight: bold; }
-            .stat-value { color: #dc2626; font-weight: bold; }
-            .commission-highlight { background: #e8f5e8; border: 2px solid #4caf50; padding: 20px; margin: 20px 0; text-align: center; border-radius: 8px; }
-            @media print { .no-print { display: none !important; } }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            ${companyLogo ? `<img src="${companyLogo}" class="logo" alt="Company Logo" />` : ''}
-            <p class="company-name">Game On Entertainment</p>
-            <h1 class="title">Venue Commission Report</h1>
+          <div class="metric-item">
+            <span class="metric-label">Tokens in Machine:</span>
+            <span class="metric-value">${tokensInMachine}</span>
           </div>
           
-          <div class="info-section">
-            <h3>Venue Information</h3>
-            <p><strong>Name:</strong> ${report.venue_name}</p>
-            ${report.venue_address ? `<p><strong>Address:</strong> ${report.venue_address}</p>` : ''}
-            <p><strong>Report Period:</strong> ${new Date(report.date_range_start).toLocaleDateString()} - ${new Date(report.date_range_end).toLocaleDateString()}</p>
-            <p><strong>Generated:</strong> ${new Date(report.report_date).toLocaleDateString()}</p>
+          <div class="metric-item">
+            <span class="metric-label">Total Game Revenue:</span>
+            <span class="metric-value">$${totalGameRevenue.toFixed(2)}</span>
           </div>
-
-          <div class="info-section">
-            <h3>Financial Summary</h3>
-            <div class="stat-item">
-              <span class="stat-label">Total Revenue:</span>
-              <span class="stat-value">$${report.total_revenue.toFixed(2)}</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-label">Commission Rate:</span>
-              <span class="stat-value">${report.venue_commission_percentage}%</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-label">Total Machines:</span>
-              <span class="stat-value">${report.total_machines}</span>
-            </div>
-            <div class="stat-item">
-              <span class="stat-label">Total Reports:</span>
-              <span class="stat-value">${report.total_reports}</span>
-            </div>
+          
+          <div class="metric-item">
+            <span class="metric-label">Venue Commission %:</span>
+            <span class="metric-value">${venueCommissionPercent}%</span>
           </div>
-
-          <div class="commission-highlight">
-            <h3>Commission Due: $${report.venue_commission_amount.toFixed(2)}</h3>
-            <p>Payment Status: ${report.paid_status ? 'PAID ✓' : 'PENDING PAYMENT'}</p>
+          
+          <div class="metric-item">
+            <span class="metric-label">Venue Commission Amount:</span>
+            <span class="metric-value">$${venueCommissionAmount.toFixed(2)}</span>
           </div>
-        </body>
-        </html>
-      `;
-    }
+        </div>
+        
+        <div class="token-notice">
+          <strong>Note:</strong> Commission on the "tokens in game" is paid via the token machine commission
+        </div>
+        
+        <div class="commission-notice">
+          <strong>Your commission will be paid into your nominated bank account within 3 business days</strong>
+        </div>
+        
+        <div class="payment-status">
+          <strong>Payment Status: ${report.paid_status ? 'PAID ✓' : 'PENDING PAYMENT'}</strong>
+        </div>
+        
+        ${report.notes ? `
+        <div style="background: #f8f8f8; padding: 15px; border: 1px solid #000; border-radius: 6px; margin: 15px 0; font-size: 13px; font-weight: bold;">
+          <h3 style="margin-top: 0; color: #000; font-size: 14px; font-weight: bold;">Notes</h3>
+          <p style="margin: 0; color: #000; font-weight: bold;">${report.notes}</p>
+        </div>
+        ` : ''}
+        
+        <div class="footer">
+          <p>Report generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</p>
+          <p><strong>Game On Entertainment</strong></p>
+        </div>
+        
+        <div class="no-print" style="text-align: center; margin-top: 20px;">
+          <button onclick="window.print()" style="padding: 10px 20px; background: #dc2626; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 10px;">Print Report</button>
+          <button onclick="window.close()" style="padding: 10px 20px; background: #000; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">Close</button>
+        </div>
+      </body>
+      </html>
+    `;
 
     // Open PDF in new window
     const printWindow = window.open('', '_blank', 'width=800,height=600');
@@ -476,6 +542,107 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
       printWindow.document.write(htmlContent);
       printWindow.document.close();
       setTimeout(() => printWindow.print(), 1000);
+    } else {
+      toast({
+        title: 'Error',
+        description: 'Pop-up blocked. Please allow pop-ups for printing.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  // Generate Venue Report PDF using existing VenueReportTemplate
+  const generateVenueReportPDF = async (report: VenueReport) => {
+    try {
+      console.log('📄 Generating venue report PDF using existing template...');
+
+      const venue = venues.find(v => v.id === report.venue_id) || {
+        id: report.venue_id,
+        name: report.venue_name,
+        address: report.venue_address,
+        commission_percentage: report.venue_commission_percentage,
+        image_url: null
+      };
+
+      const venueMachines = machines.filter(m => m.venue_id === report.venue_id);
+      
+      // Parse machine data from the stored report
+      let machineReports: MachineReportData[] = [];
+      
+      if (report.machine_data) {
+        try {
+          const parsedData = typeof report.machine_data === 'string' 
+            ? JSON.parse(report.machine_data) 
+            : report.machine_data;
+          
+          if (Array.isArray(parsedData)) {
+            machineReports = parsedData;
+          }
+        } catch (parseError) {
+          console.warn('Failed to parse machine_data:', parseError);
+        }
+      }
+
+      // If no machine data in report, create from venue machines
+      if (machineReports.length === 0) {
+        machineReports = venueMachines.map(machine => ({
+          machine_id: machine.id,
+          machine_name: machine.name,
+          machine_serial: machine.serial_number || 'N/A',
+          total_turnover: 0,
+          total_tokens: 0,
+          commission_amount: 0,
+          report_count: 0,
+          has_data: false
+        }));
+      }
+
+      const dateRange = {
+        start: report.date_range_start,
+        end: report.date_range_end
+      };
+
+      // Use the existing VenueReportTemplate
+      const reportTemplate = VenueReportTemplate({
+        venue,
+        machines: venueMachines,
+        machineReports,
+        reports: [], // Using machineReports instead
+        dateRange,
+        companyLogo
+      });
+
+      const htmlContent = reportTemplate.generateHTML();
+
+      // Open in new window for printing
+      const printWindow = window.open('', '_blank', 'width=1200,height=800');
+      if (printWindow) {
+        printWindow.document.write(htmlContent);
+        printWindow.document.close();
+        setTimeout(() => printWindow.print(), 1000);
+      } else {
+        // Fallback: download as HTML file
+        const blob = new Blob([htmlContent], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `venue-report-${venue.name}-${dateRange.start}-${dateRange.end}.html`;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+
+      toast({
+        title: 'Success',
+        description: 'Venue report generated successfully!'
+      });
+
+    } catch (error: any) {
+      console.error('❌ Error generating venue report:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to generate venue report',
+        variant: 'destructive'
+      });
     }
   };
 
@@ -742,7 +909,7 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => generateReportPDF(report, 'machine')}
+                                onClick={() => generateMachineReportPDF(report)}
                               >
                                 <Download className="h-4 w-4 mr-1" />
                                 PDF
@@ -852,7 +1019,7 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => generateReportPDF(report, 'venue')}
+                              onClick={() => generateVenueReportPDF(report)}
                             >
                               <Download className="h-4 w-4 mr-1" />
                               PDF

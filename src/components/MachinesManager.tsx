@@ -10,8 +10,8 @@ import MachineEditDialog from './MachineEditDialog';
 import ConfirmDeleteDialog from './ConfirmDeleteDialog';
 import MachineProfile from './MachineProfile';
 import PayoutCalculator from './PayoutCalculator';
+import PayWaveDisplay from './PayWaveDisplay';
 import { useToast } from '@/hooks/use-toast';
-
 
 interface MachinesManagerProps {
   readOnly?: boolean;
@@ -32,7 +32,6 @@ const MachinesManager: React.FC<MachinesManagerProps> = ({ readOnly = false }) =
     machine.serial_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     machine.barcode?.toLowerCase().includes(searchTerm.toLowerCase())
   );
-
 
   const handleScanResult = async (barcode: string, machine?: any) => {
     try {
@@ -155,6 +154,16 @@ const MachinesManager: React.FC<MachinesManagerProps> = ({ readOnly = false }) =
                   <p><strong>Barcode:</strong> {machine.barcode}</p>
                 )}
                 <p><strong>Type:</strong> {machine.type}</p>
+                
+                {/* Add PayWave display */}
+                <div className="mt-2">
+                  <PayWaveDisplay 
+                    machineId={machine.id}
+                    machineName={machine.name}
+                    showInline={true}
+                    className="relative"
+                  />
+                </div>
               </div>
 
               <div className="border-t pt-2">

@@ -10,6 +10,7 @@ import { ServiceScheduleDialog } from './ServiceScheduleDialog';
 import { ReportsContent } from './ReportsContent';
 import MachineReportForm from './MachineReportForm';
 import AddPrizesToMachine from './AddPrizesToMachine';
+import PayWaveDisplay from './PayWaveDisplay';
 import { createImageWithFallback } from '@/lib/imageUtils';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -249,6 +250,13 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                     machineName={machine.name}
                   />
                 )}
+
+                {/* PayWave Terminals Information */}
+                <PayWaveDisplay 
+                  machineId={machine.id}
+                  machineName={machine.name}
+                  showInline={false}
+                />
               </div>
 
               {/* Middle Column - Stats and Info */}

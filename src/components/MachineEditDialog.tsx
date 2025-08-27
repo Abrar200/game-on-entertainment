@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Package, Wrench } from 'lucide-react';
+import { Plus, Trash2, Package, Wrench, CreditCard, X } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useToast } from '@/hooks/use-toast';
 import ImageUpload from '@/components/ImageUpload';
@@ -19,13 +19,19 @@ interface MachineEditDialogProps {
   machine?: any;
 }
 
+interface PayWaveTerminal {
+  id?: string;
+  name: string;
+  terminal_number: string;
+}
+
 interface MachineStock {
   id: string;
   machine_id: string;
   prize_id: string;
   quantity: number;
   notes?: string;
-  prizes?: any; // This will contain the prize data
+  prizes?: any;
 }
 
 interface MachinePart {
@@ -34,7 +40,7 @@ interface MachinePart {
   part_id: string;
   quantity: number;
   notes?: string;
-  parts?: any; // This will contain the part data
+  parts?: any;
 }
 
 export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
@@ -47,6 +53,10 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [machineStock, setMachineStock] = useState<MachineStock[]>([]);
   const [machineParts, setMachineParts] = useState<MachinePart[]>([]);
+  const [payWaveTerminals, setPayWaveTerminals] = useState<PayWaveTerminal[]>([
+    { name: '', terminal_number: '' }
+  ]);
+  
   const [formData, setFormData] = useState({
     name: '',
     type: '',
@@ -69,6 +79,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         });
         fetchMachineStock();
         fetchMachineParts();
+        fetchPayWaveTerminals();
       } else {
         setFormData({
           name: '',
@@ -80,9 +91,113 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         });
         setMachineStock([]);
         setMachineParts([]);
+        setPayWaveTerminals([{ name: '', terminal_number: '' }]);
       }
     }
   }, [isOpen, machine]);
+
+  const fetchPayWaveTerminals = async () => {
+    if (!machine?.id) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('machine_paywave_terminals')
+        .select('*')
+        .eq('machine_id', machine.id)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('❌ Error fetching PayWave terminals:', error);
+        // If table doesn't exist, just use default
+        setPayWaveTerminals([{ name: '', terminal_number: '' }]);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        setPayWaveTerminals(data.map(terminal => ({
+          id: terminal.id,
+          name: terminal.name || '',
+          terminal_number: terminal.terminal_number || ''
+        })));
+      } else {
+        setPayWaveTerminals([{ name: '', terminal_number: '' }]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching PayWave terminals:', error);
+      setPayWaveTerminals([{ name: '', terminal_number: '' }]);
+    }
+  };
+
+  const addPayWaveTerminal = () => {
+    if (payWaveTerminals.length < 6) {
+      setPayWaveTerminals([...payWaveTerminals, { name: '', terminal_number: '' }]);
+    } else {
+      toast({
+        title: 'Maximum Reached',
+        description: 'Maximum of 6 PayWave terminals allowed per machine',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const removePayWaveTerminal = (index: number) => {
+    if (payWaveTerminals.length > 1) {
+      const newTerminals = payWaveTerminals.filter((_, i) => i !== index);
+      setPayWaveTerminals(newTerminals);
+    }
+  };
+
+  const updatePayWaveTerminal = (index: number, field: 'name' | 'terminal_number', value: string) => {
+    const newTerminals = [...payWaveTerminals];
+    newTerminals[index] = { ...newTerminals[index], [field]: value };
+    setPayWaveTerminals(newTerminals);
+  };
+
+  const savePayWaveTerminals = async (machineId: string) => {
+    try {
+      // First, delete existing terminals for this machine
+      if (machine?.id) {
+        await supabase
+          .from('machine_paywave_terminals')
+          .delete()
+          .eq('machine_id', machineId);
+      }
+
+      // Filter out empty terminals
+      const validTerminals = payWaveTerminals.filter(terminal => 
+        terminal.name.trim() || terminal.terminal_number.trim()
+      );
+
+      if (validTerminals.length === 0) {
+        console.log('No PayWave terminals to save');
+        return;
+      }
+
+      // Insert new terminals
+      const terminalsToInsert = validTerminals.map(terminal => ({
+        machine_id: machineId,
+        name: terminal.name.trim(),
+        terminal_number: terminal.terminal_number.trim()
+      }));
+
+      const { error } = await supabase
+        .from('machine_paywave_terminals')
+        .insert(terminalsToInsert);
+
+      if (error) {
+        console.error('❌ Error saving PayWave terminals:', error);
+        // Don't throw error if table doesn't exist - it's optional
+        if (!error.message.includes('does not exist')) {
+          throw error;
+        }
+      } else {
+        console.log('✅ PayWave terminals saved successfully');
+      }
+    } catch (error) {
+      console.error('❌ Error in savePayWaveTerminals:', error);
+      // Don't fail the whole operation if PayWave save fails
+    }
+  };
 
   // Function to fetch machine stock
   const fetchMachineStock = async () => {
@@ -169,6 +284,30 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       return;
     }
 
+    // Validate PayWave terminals
+    const validTerminals = payWaveTerminals.filter(terminal => 
+      terminal.name.trim() || terminal.terminal_number.trim()
+    );
+
+    for (const terminal of validTerminals) {
+      if (terminal.name.trim() && !terminal.terminal_number.trim()) {
+        toast({ 
+          title: 'Validation Error', 
+          description: 'PayWave terminal number is required when name is provided',
+          variant: 'destructive' 
+        });
+        return;
+      }
+      if (terminal.terminal_number.trim() && !terminal.name.trim()) {
+        toast({ 
+          title: 'Validation Error', 
+          description: 'PayWave terminal name is required when number is provided',
+          variant: 'destructive' 
+        });
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const machineData = {
@@ -180,6 +319,8 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         serial_number: formData.serial_number.trim() || null
       };
 
+      let machineId: string;
+
       if (machine) {
         const { error } = await supabase
           .from('machines')
@@ -187,12 +328,24 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           .eq('id', machine.id);
 
         if (error) throw new Error(`Failed to update machine: ${error.message}`);
-        await refreshData();
+        machineId = machine.id;
+        
         toast({ title: 'Success', description: 'Machine updated successfully!' });
       } else {
-        await addMachine(machineData);
+        const result = await addMachine(machineData);
+        machineId = result?.id || machine?.id;
+        
+        if (!machineId) {
+          throw new Error('Failed to get machine ID after creation');
+        }
+        
         toast({ title: 'Success', description: 'Machine added successfully!' });
       }
+
+      // Save PayWave terminals
+      await savePayWaveTerminals(machineId);
+      
+      await refreshData();
       onClose();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to save machine';
@@ -264,7 +417,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     }
   };
 
-  
   // Remove part from machine
   const removePartFromMachine = async (partStockId: string) => {
     try {
@@ -284,8 +436,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       });
     }
   };
-    
-
 
   const AddPrizeForm = () => {
     const [selectedPrize, setSelectedPrize] = useState('');
@@ -344,7 +494,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       </Card>
     );
   };
-  
 
   const AddPartForm = () => {
     const [selectedPart, setSelectedPart] = useState('');
@@ -414,6 +563,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
             <Tabs defaultValue="basic" className="w-full">
                 <TabsList>
                     <TabsTrigger value="basic">Basic Info</TabsTrigger>
+                    <TabsTrigger value="paywave">PayWave Terminals</TabsTrigger>
                     {machine && <TabsTrigger value="prizes">Prizes</TabsTrigger>}
                     {machine && <TabsTrigger value="parts">Parts</TabsTrigger>}
                 </TabsList>
@@ -502,6 +652,82 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
                             </Button>
                         </div>
                     </form>
+                </TabsContent>
+
+                <TabsContent value="paywave" className="space-y-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <CreditCard className="h-5 w-5" />
+                                PayWave Terminals
+                                <Badge variant="secondary" className="ml-2">
+                                    {payWaveTerminals.filter(t => t.name.trim() || t.terminal_number.trim()).length} / 6
+                                </Badge>
+                            </CardTitle>
+                            <p className="text-sm text-gray-600">
+                                Add PayWave terminal information for this machine. Most machines have 1 terminal, but some can have up to 6.
+                            </p>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {payWaveTerminals.map((terminal, index) => (
+                                <div key={index} className="flex items-center gap-3 p-3 border rounded-lg">
+                                    <div className="flex items-center justify-center w-8 h-8 bg-blue-100 text-blue-600 rounded-full text-sm font-semibold">
+                                        {index + 1}
+                                    </div>
+                                    
+                                    <div className="flex-1 grid grid-cols-2 gap-3">
+                                        <div>
+                                            <Label className="text-xs">Terminal Name</Label>
+                                            <Input
+                                                placeholder="e.g., Main Terminal, Player 1"
+                                                value={terminal.name}
+                                                onChange={(e) => updatePayWaveTerminal(index, 'name', e.target.value)}
+                                            />
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs">Terminal Number</Label>
+                                            <Input
+                                                placeholder="e.g., 12345678"
+                                                value={terminal.terminal_number}
+                                                onChange={(e) => updatePayWaveTerminal(index, 'terminal_number', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+                                    
+                                    {payWaveTerminals.length > 1 && (
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => removePayWaveTerminal(index)}
+                                            className="text-red-600 hover:text-red-700"
+                                        >
+                                            <X className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                </div>
+                            ))}
+                            
+                            {payWaveTerminals.length < 6 && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={addPayWaveTerminal}
+                                    className="w-full"
+                                >
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Add PayWave Terminal ({payWaveTerminals.length}/6)
+                                </Button>
+                            )}
+                            
+                            <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                                <p className="text-sm text-blue-800">
+                                    <strong>Note:</strong> Only terminals with both name and number will be saved. 
+                                    Empty terminals will be ignored.
+                                </p>
+                            </div>
+                        </CardContent>
+                    </Card>
                 </TabsContent>
 
                 {machine && (

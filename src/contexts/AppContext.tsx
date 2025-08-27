@@ -13,6 +13,12 @@ interface Venue {
   commission_percentage: number;
 }
 
+interface PayWaveTerminal {
+  id: string;
+  name: string;
+  terminal_number: string;
+}
+
 interface Machine {
   id: string;
   name: string;
@@ -26,8 +32,8 @@ interface Machine {
   current_prize?: any;
   serial_number?: string;
   barcode?: string;
+  paywave_terminals?: PayWaveTerminal[];
 }
-
 
 export const findMachineByBarcode = async (barcode: string): Promise<Machine> => {
   try {
@@ -139,7 +145,6 @@ interface Part {
   created_at: string;
 }
 
-
 interface AppContextType {
   sidebarOpen: boolean;
   toggleSidebar: () => void;
@@ -152,7 +157,7 @@ interface AppContextType {
   addVenue: (venue: Omit<Venue, 'id'>) => Promise<void>;
   deleteVenue: (id: string) => Promise<void>;
   updateVenue: (id: string, venue: Partial<Venue>) => Promise<void>;
-  addMachine: (machine: Omit<Machine, 'id'>) => Promise<void>;
+  addMachine: (machine: Omit<Machine, 'id'>, payWaveTerminals?: Array<{name: string, terminal_number: string}>) => Promise<any>;
   deleteMachine: (id: string) => Promise<void>;
   addPrize: (prize: Omit<Prize, 'id'>) => Promise<void>;
   deletePrize: (id: string) => Promise<void>;
@@ -173,7 +178,7 @@ interface AppContextType {
   updatePart: (id: string, part: Partial<Part>) => Promise<void>;
   updatePartStock: (id: string, quantity: number) => Promise<void>;
   findPartByBarcode: (barcode: string) => Promise<Part>;
-  // Add this line:
+  savePayWaveTerminals: (machineId: string, terminals: Array<{name: string, terminal_number: string}>) => Promise<void>;
   logStockMovement: (
     itemType: 'prize' | 'part',
     itemId: string,
@@ -215,7 +220,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedMachineForHistory, setSelectedMachineForHistory] = useState<Machine | null>(null);
   const [parts, setParts] = useState<Part[]>([]);
   const { toast } = useToast();
-
 
   const generatePartBarcode = (name: string): string => {
     const cleanName = name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 8);
@@ -278,10 +282,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const savePayWaveTerminals = async (machineId: string, terminals: Array<{name: string, terminal_number: string}>) => {
+    try {
+      // Filter out empty terminals
+      const validTerminals = terminals.filter(terminal => 
+        terminal.name.trim() && terminal.terminal_number.trim()
+      );
 
-  const addMachine = async (machine: any) => {
+      if (validTerminals.length === 0) {
+        console.log('No valid PayWave terminals to save');
+        return;
+      }
+
+      // Delete existing terminals for this machine first
+      await supabase
+        .from('machine_paywave_terminals')
+        .delete()
+        .eq('machine_id', machineId);
+
+      // Insert new terminals
+      const terminalsToInsert = validTerminals.map(terminal => ({
+        machine_id: machineId,
+        name: terminal.name.trim(),
+        terminal_number: terminal.terminal_number.trim()
+      }));
+
+      const { error } = await supabase
+        .from('machine_paywave_terminals')
+        .insert(terminalsToInsert);
+
+      if (error) {
+        console.error('❌ Error saving PayWave terminals:', error);
+        // Don't throw error if table doesn't exist - it's optional
+        if (!error.message.includes('does not exist')) {
+          throw error;
+        }
+      } else {
+        console.log('✅ PayWave terminals saved successfully');
+      }
+    } catch (error) {
+      console.error('❌ Error in savePayWaveTerminals:', error);
+      // Don't fail the whole operation if PayWave save fails
+    }
+  };
+
+  const addMachine = async (machine: any, payWaveTerminals?: Array<{name: string, terminal_number: string}>) => {
     try {
       console.log('Adding machine with data:', machine);
+      console.log('PayWave terminals:', payWaveTerminals);
 
       // Generate barcode
       const barcode = generateBarcode(machine.name, machine.serial_number || '');
@@ -300,7 +348,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { data, error } = await supabase
         .from('machines')
         .insert([machineWithBarcode])
-        .select(); // Add select to see what was inserted
+        .select()
+        .single(); // Get the single inserted record
 
       if (error) {
         console.error('Supabase error:', error);
@@ -308,7 +357,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       console.log('Successfully inserted machine:', data);
+      
+      // Save PayWave terminals if provided
+      if (payWaveTerminals && payWaveTerminals.length > 0 && data?.id) {
+        await savePayWaveTerminals(data.id, payWaveTerminals);
+      }
+
       await refreshData();
+      
+      // Return the machine data so we can get the ID
+      return data;
 
     } catch (error) {
       console.error('Error in addMachine:', error);
@@ -391,7 +449,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toast({ title: 'Success', description: 'Prize updated successfully' });
   };
 
-
   const updatePrizeStock = async (id: string, quantity: number) => {
     try {
       // Get current stock level
@@ -473,7 +530,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error('Error logging stock movement:', error);
     }
   };
-
 
   const addMachineStock = async (stock: MachineStock & { notes?: string }) => {
     try {
@@ -675,6 +731,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updatePart,
     updatePartStock,
     findPartByBarcode,
+    savePayWaveTerminals,
   };
 
   return (

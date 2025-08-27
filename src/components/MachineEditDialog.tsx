@@ -48,7 +48,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
   onClose,
   machine
 }) => {
-  const { venues, prizes, parts, refreshData, addMachine } = useAppContext();
+  const { venues, prizes, parts, refreshData, addMachine, savePayWaveTerminals } = useAppContext();
   const { toast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [machineStock, setMachineStock] = useState<MachineStock[]>([]);
@@ -153,7 +153,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     setPayWaveTerminals(newTerminals);
   };
 
-  const savePayWaveTerminals = async (machineId: string) => {
+  const savePayWaveTerminalsLocal = async (machineId: string) => {
     try {
       // First, delete existing terminals for this machine
       if (machine?.id) {
@@ -194,7 +194,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         console.log('✅ PayWave terminals saved successfully');
       }
     } catch (error) {
-      console.error('❌ Error in savePayWaveTerminals:', error);
+      console.error('❌ Error in savePayWaveTerminalsLocal:', error);
       // Don't fail the whole operation if PayWave save fails
     }
   };
@@ -322,6 +322,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       let machineId: string;
 
       if (machine) {
+        // Updating existing machine
         const { error } = await supabase
           .from('machines')
           .update(machineData)
@@ -330,10 +331,19 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         if (error) throw new Error(`Failed to update machine: ${error.message}`);
         machineId = machine.id;
         
+        // Save PayWave terminals for existing machine
+        await savePayWaveTerminalsLocal(machineId);
+        
         toast({ title: 'Success', description: 'Machine updated successfully!' });
       } else {
-        const result = await addMachine(machineData);
-        machineId = result?.id || machine?.id;
+        // Creating new machine - use addMachine with PayWave terminals
+        const terminalData = validTerminals.map(terminal => ({
+          name: terminal.name.trim(),
+          terminal_number: terminal.terminal_number.trim()
+        }));
+        
+        const result = await addMachine(machineData, terminalData);
+        machineId = result?.id;
         
         if (!machineId) {
           throw new Error('Failed to get machine ID after creation');
@@ -341,9 +351,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         
         toast({ title: 'Success', description: 'Machine added successfully!' });
       }
-
-      // Save PayWave terminals
-      await savePayWaveTerminals(machineId);
       
       await refreshData();
       onClose();

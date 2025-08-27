@@ -108,7 +108,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
       if (error) {
         console.error('❌ Error fetching PayWave terminals:', error);
-        // If table doesn't exist, just use default
         setPayWaveTerminals([{ name: '', terminal_number: '' }]);
         return;
       }
@@ -130,7 +129,9 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
   const addPayWaveTerminal = () => {
     if (payWaveTerminals.length < 6) {
-      setPayWaveTerminals([...payWaveTerminals, { name: '', terminal_number: '' }]);
+      // Optimistic update
+      const newTerminals = [...payWaveTerminals, { name: '', terminal_number: '' }];
+      setPayWaveTerminals(newTerminals);
     } else {
       toast({
         title: 'Maximum Reached',
@@ -142,12 +143,14 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
   const removePayWaveTerminal = (index: number) => {
     if (payWaveTerminals.length > 1) {
+      // Optimistic update
       const newTerminals = payWaveTerminals.filter((_, i) => i !== index);
       setPayWaveTerminals(newTerminals);
     }
   };
 
   const updatePayWaveTerminal = (index: number, field: 'name' | 'terminal_number', value: string) => {
+    // Optimistic update
     const newTerminals = [...payWaveTerminals];
     newTerminals[index] = { ...newTerminals[index], [field]: value };
     setPayWaveTerminals(newTerminals);
@@ -155,7 +158,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
   const savePayWaveTerminalsLocal = async (machineId: string) => {
     try {
-      // First, delete existing terminals for this machine
+      // Delete existing terminals for this machine
       if (machine?.id) {
         await supabase
           .from('machine_paywave_terminals')
@@ -186,7 +189,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
       if (error) {
         console.error('❌ Error saving PayWave terminals:', error);
-        // Don't throw error if table doesn't exist - it's optional
         if (!error.message.includes('does not exist')) {
           throw error;
         }
@@ -195,11 +197,9 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       }
     } catch (error) {
       console.error('❌ Error in savePayWaveTerminalsLocal:', error);
-      // Don't fail the whole operation if PayWave save fails
     }
   };
 
-  // Function to fetch machine stock
   const fetchMachineStock = async () => {
     if (!machine?.id) return;
     
@@ -237,7 +237,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     }
   };
 
-  // Function to fetch machine parts
   const fetchMachineParts = async () => {
     if (!machine?.id) return;
 
@@ -275,7 +274,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     }
   };
 
-  // Handle form submission to update or add machine
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -336,7 +334,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         
         toast({ title: 'Success', description: 'Machine updated successfully!' });
       } else {
-        // Creating new machine - use addMachine with PayWave terminals
+        // Creating new machine
         const terminalData = validTerminals.map(terminal => ({
           name: terminal.name.trim(),
           terminal_number: terminal.terminal_number.trim()
@@ -352,7 +350,17 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         toast({ title: 'Success', description: 'Machine added successfully!' });
       }
       
+      // Trigger refresh to update the context and other components
       await refreshData();
+      
+      // Emit custom event to notify other components about machine update
+      window.dispatchEvent(new CustomEvent('machineUpdated', { 
+        detail: { 
+          machineId, 
+          updatedData: { ...machineData, paywave_terminals: validTerminals } 
+        } 
+      }));
+      
       onClose();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to save machine';
@@ -362,78 +370,171 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     }
   };
 
-  // Add prize to machine
+  // Optimistic prize addition
   const addPrizeToMachine = async (prizeId: string, quantity: number, notes?: string) => {
     if (!machine?.id) return;
 
     try {
-      const { error } = await supabase
-        .from('machine_stock')
-        .insert([{ machine_id: machine.id, prize_id: prizeId, quantity, notes }]);
-
-      if (error) throw error;
-
+      // Find the prize for optimistic update
       const prize = prizes.find((p) => p.id === prizeId);
+      if (!prize) return;
+
+      // Create optimistic stock entry
+      const optimisticStock: MachineStock = {
+        id: `temp-${Date.now()}`, // Temporary ID
+        machine_id: machine.id,
+        prize_id: prizeId,
+        quantity,
+        notes,
+        prizes: prize
+      };
+
+      // Optimistic update - add to local state immediately
+      setMachineStock(prev => [...prev, optimisticStock]);
+
+      // Background database update
+      const { data, error } = await supabase
+        .from('machine_stock')
+        .insert([{ machine_id: machine.id, prize_id: prizeId, quantity, notes }])
+        .select('*')
+        .single();
+
+      if (error) {
+        // Revert optimistic update on error
+        setMachineStock(prev => prev.filter(stock => stock.id !== optimisticStock.id));
+        throw error;
+      }
+
+      // Replace temporary entry with real database entry
+      setMachineStock(prev => 
+        prev.map(stock => 
+          stock.id === optimisticStock.id 
+            ? { ...stock, id: data.id }
+            : stock
+        )
+      );
+
+      // Update prize stock
       if (prize) {
         const newStock = Math.max(0, prize.stock_quantity - quantity);
         await supabase.from('prizes').update({ stock_quantity: newStock }).eq('id', prizeId);
       }
 
-      await fetchMachineStock();
-      await refreshData();
+      // Refresh data in background
+      refreshData();
       toast({ title: 'Success', description: 'Prize added to machine!' });
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to add prize to machine', variant: 'destructive' });
     }
   };
 
-  // Add part to machine
+  // Optimistic part addition
   const addPartToMachine = async (partId: string, quantity: number, notes?: string) => {
     if (!machine?.id) return;
 
     try {
-      const { error } = await supabase
-        .from('machine_parts')
-        .insert([{ machine_id: machine.id, part_id: partId, quantity, notes }]);
-
-      if (error) throw error;
-
+      // Find the part for optimistic update
       const part = parts.find((p) => p.id === partId);
+      if (!part) return;
+
+      // Create optimistic part entry
+      const optimisticPart: MachinePart = {
+        id: `temp-${Date.now()}`, // Temporary ID
+        machine_id: machine.id,
+        part_id: partId,
+        quantity,
+        notes,
+        parts: part
+      };
+
+      // Optimistic update - add to local state immediately
+      setMachineParts(prev => [...prev, optimisticPart]);
+
+      // Background database update
+      const { data, error } = await supabase
+        .from('machine_parts')
+        .insert([{ machine_id: machine.id, part_id: partId, quantity, notes }])
+        .select('*')
+        .single();
+
+      if (error) {
+        // Revert optimistic update on error
+        setMachineParts(prev => prev.filter(part => part.id !== optimisticPart.id));
+        throw error;
+      }
+
+      // Replace temporary entry with real database entry
+      setMachineParts(prev => 
+        prev.map(part => 
+          part.id === optimisticPart.id 
+            ? { ...part, id: data.id }
+            : part
+        )
+      );
+
+      // Update part stock
       if (part) {
         const newStock = Math.max(0, part.stock_quantity - quantity);
         await supabase.from('parts').update({ stock_quantity: newStock }).eq('id', partId);
       }
 
-      await fetchMachineParts();
-      await refreshData();
+      // Refresh data in background
+      refreshData();
       toast({ title: 'Success', description: 'Part added to machine!' });
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to add part to machine', variant: 'destructive' });
     }
   };
 
-  // Remove prize from machine
+  // Optimistic prize removal
   const removePrizeFromMachine = async (stockId: string) => {
     try {
+      // Optimistic update - remove from local state immediately
+      const stockToRemove = machineStock.find(stock => stock.id === stockId);
+      setMachineStock(prev => prev.filter(stock => stock.id !== stockId));
+
+      // Background database update
       const { error } = await supabase.from('machine_stock').delete().eq('id', stockId);
-      if (error) throw error;
-      await fetchMachineStock();
+      
+      if (error) {
+        // Revert optimistic update on error
+        if (stockToRemove) {
+          setMachineStock(prev => [...prev, stockToRemove]);
+        }
+        throw error;
+      }
+
+      // Refresh data in background
+      refreshData();
       toast({ title: 'Success', description: 'Prize removed from machine!' });
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to remove prize', variant: 'destructive' });
     }
   };
 
-  // Remove part from machine
+  // Optimistic part removal
   const removePartFromMachine = async (partStockId: string) => {
     try {
+      // Optimistic update - remove from local state immediately
+      const partToRemove = machineParts.find(part => part.id === partStockId);
+      setMachineParts(prev => prev.filter(part => part.id !== partStockId));
+
+      // Background database update
       const { error } = await supabase
         .from('machine_parts')
         .delete()
         .eq('id', partStockId);
-  
-      if (error) throw error;
-      await fetchMachineParts();
+
+      if (error) {
+        // Revert optimistic update on error
+        if (partToRemove) {
+          setMachineParts(prev => [...prev, partToRemove]);
+        }
+        throw error;
+      }
+
+      // Refresh data in background
+      refreshData();
       toast({ title: 'Success', description: 'Part removed from machine!' });
     } catch (error) {
       toast({

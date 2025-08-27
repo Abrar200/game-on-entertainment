@@ -350,16 +350,31 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         toast({ title: 'Success', description: 'Machine added successfully!' });
       }
       
-      // Trigger refresh to update the context and other components
-      await refreshData();
-      
-      // Emit custom event to notify other components about machine update
+      // Emit custom event to notify other components about machine update FIRST
+      // This ensures immediate UI updates before the slower refreshData() call
       window.dispatchEvent(new CustomEvent('machineUpdated', { 
         detail: { 
           machineId, 
-          updatedData: { ...machineData, paywave_terminals: validTerminals } 
+          updatedData: { 
+            ...machineData, 
+            paywave_terminals: validTerminals,
+            _justUpdated: true // Flag to show "Updated" badge temporarily
+          } 
         } 
       }));
+
+      // Also emit PayWave update event specifically
+      window.dispatchEvent(new CustomEvent('paywaveUpdated', { 
+        detail: { 
+          machineId, 
+          terminals: validTerminals 
+        } 
+      }));
+      
+      // Background refresh to sync with database
+      setTimeout(() => {
+        refreshData();
+      }, 100);
       
       onClose();
     } catch (error) {
@@ -422,6 +437,12 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
       // Refresh data in background
       refreshData();
+      
+      // Emit event for real-time updates
+      window.dispatchEvent(new CustomEvent('machineStockUpdated', { 
+        detail: { machineId: machine.id, type: 'prize_added' } 
+      }));
+      
       toast({ title: 'Success', description: 'Prize added to machine!' });
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to add prize to machine', variant: 'destructive' });
@@ -480,6 +501,12 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
       // Refresh data in background
       refreshData();
+      
+      // Emit event for real-time updates
+      window.dispatchEvent(new CustomEvent('machineStockUpdated', { 
+        detail: { machineId: machine.id, type: 'part_added' } 
+      }));
+      
       toast({ title: 'Success', description: 'Part added to machine!' });
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to add part to machine', variant: 'destructive' });
@@ -506,6 +533,12 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
       // Refresh data in background
       refreshData();
+      
+      // Emit event for real-time updates
+      window.dispatchEvent(new CustomEvent('machineStockUpdated', { 
+        detail: { machineId: machine.id, type: 'prize_removed' } 
+      }));
+      
       toast({ title: 'Success', description: 'Prize removed from machine!' });
     } catch (error) {
       toast({ title: 'Error', description: 'Failed to remove prize', variant: 'destructive' });
@@ -535,6 +568,12 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
       // Refresh data in background
       refreshData();
+      
+      // Emit event for real-time updates
+      window.dispatchEvent(new CustomEvent('machineStockUpdated', { 
+        detail: { machineId: machine.id, type: 'part_removed' } 
+      }));
+      
       toast({ title: 'Success', description: 'Part removed from machine!' });
     } catch (error) {
       toast({

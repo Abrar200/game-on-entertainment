@@ -64,7 +64,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     status: 'active',
     image_url: '',
     serial_number: '',
-    rotation_period: '' as '' | '3' | '6' | '12', // NEW: Rotation period
+    rotation_period: '' as '' | 'none' | '3' | '6' | '12', // NEW: Rotation period
     rotation_threshold: '300' // NEW: Earnings threshold
   });
 
@@ -78,7 +78,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           status: machine.status || 'active',
           image_url: machine.image_url || '',
           serial_number: machine.serial_number || '',
-          rotation_period: machine.rotation_period?.toString() || '',
+          rotation_period: machine.rotation_period?.toString() || 'none',
           rotation_threshold: machine.rotation_threshold?.toString() || '300'
         });
         fetchMachineStock();
@@ -93,7 +93,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           status: 'active',
           image_url: '',
           serial_number: '',
-          rotation_period: '',
+          rotation_period: 'none',
           rotation_threshold: '300'
         });
         setMachineStock([]);
@@ -122,7 +122,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       if (data) {
         setFormData(prev => ({
           ...prev,
-          rotation_period: data.rotation_period?.toString() || '',
+          rotation_period: data.rotation_period?.toString() || 'none',
           rotation_threshold: data.rotation_threshold?.toString() || '300'
         }));
       }
@@ -232,7 +232,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
   // NEW: Save rotation settings
   const saveRotationSettings = async (machineId: string) => {
     try {
-      if (!formData.rotation_period) {
+      if (!formData.rotation_period || formData.rotation_period === 'none') {
         console.log('No rotation period set, skipping rotation settings');
         return;
       }
@@ -371,7 +371,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     }
 
     // NEW: Validate rotation settings
-    if (formData.rotation_period && !['3', '6', '12'].includes(formData.rotation_period)) {
+    if (formData.rotation_period && formData.rotation_period !== 'none' && !['3', '6', '12'].includes(formData.rotation_period)) {
       toast({ 
         title: 'Validation Error', 
         description: 'Rotation period must be 3, 6, or 12 months',
@@ -380,7 +380,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       return;
     }
 
-    if (formData.rotation_period && (parseInt(formData.rotation_threshold) < 1)) {
+    if (formData.rotation_period && formData.rotation_period !== 'none' && (parseInt(formData.rotation_threshold) < 1)) {
       toast({ 
         title: 'Validation Error', 
         description: 'Rotation threshold must be at least $1',
@@ -446,8 +446,8 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           updatedData: { 
             ...machineData, 
             paywave_terminals: validTerminals,
-            rotation_period: formData.rotation_period ? parseInt(formData.rotation_period) : null,
-            rotation_threshold: formData.rotation_period ? parseInt(formData.rotation_threshold) : null,
+            rotation_period: (formData.rotation_period && formData.rotation_period !== 'none') ? parseInt(formData.rotation_period) : null,
+            rotation_threshold: (formData.rotation_period && formData.rotation_period !== 'none') ? parseInt(formData.rotation_threshold) : null,
             _justUpdated: true
           } 
         } 
@@ -882,13 +882,13 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
                                 <Label>Rotation Period (Optional)</Label>
                                 <Select 
                                     value={formData.rotation_period} 
-                                    onValueChange={(value) => setFormData({ ...formData, rotation_period: value as '' | '3' | '6' | '12' })}
+                                    onValueChange={(value) => setFormData({ ...formData, rotation_period: value as '' | 'none' | '3' | '6' | '12' })}
                                 >
                                     <SelectTrigger>
                                         <SelectValue placeholder="Select rotation schedule" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="">No automatic rotation</SelectItem>
+                                        <SelectItem value="none">No automatic rotation</SelectItem>
                                         <SelectItem value="3">Every 3 months</SelectItem>
                                         <SelectItem value="6">Every 6 months</SelectItem>
                                         <SelectItem value="12">Every 12 months</SelectItem>
@@ -899,7 +899,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
                                 </p>
                             </div>
 
-                            {formData.rotation_period && (
+                            {formData.rotation_period && formData.rotation_period !== 'none' && (
                                 <div>
                                     <Label>Earnings Threshold ($/month)</Label>
                                     <Input

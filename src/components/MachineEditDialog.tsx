@@ -63,7 +63,9 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     venue_id: '',
     status: 'active',
     image_url: '',
-    serial_number: ''
+    serial_number: '',
+    rotation_period: '' as '' | '3' | '6' | '12', // NEW: Rotation period
+    rotation_threshold: '300' // NEW: Earnings threshold
   });
 
   useEffect(() => {
@@ -75,11 +77,14 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           venue_id: machine.venue_id || 'none',
           status: machine.status || 'active',
           image_url: machine.image_url || '',
-          serial_number: machine.serial_number || ''
+          serial_number: machine.serial_number || '',
+          rotation_period: machine.rotation_period?.toString() || '',
+          rotation_threshold: machine.rotation_threshold?.toString() || '300'
         });
         fetchMachineStock();
         fetchMachineParts();
         fetchPayWaveTerminals();
+        fetchRotationSettings(); // NEW: Fetch rotation settings
       } else {
         setFormData({
           name: '',
@@ -87,7 +92,9 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           venue_id: 'none',
           status: 'active',
           image_url: '',
-          serial_number: ''
+          serial_number: '',
+          rotation_period: '',
+          rotation_threshold: '300'
         });
         setMachineStock([]);
         setMachineParts([]);
@@ -95,6 +102,34 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       }
     }
   }, [isOpen, machine]);
+
+  // NEW: Fetch rotation settings from database
+  const fetchRotationSettings = async () => {
+    if (!machine?.id) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('machine_rotations')
+        .select('rotation_period, rotation_threshold')
+        .eq('machine_id', machine.id)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error fetching rotation settings:', error);
+        return;
+      }
+
+      if (data) {
+        setFormData(prev => ({
+          ...prev,
+          rotation_period: data.rotation_period?.toString() || '',
+          rotation_threshold: data.rotation_threshold?.toString() || '300'
+        }));
+      }
+    } catch (error) {
+      console.error('Error fetching rotation settings:', error);
+    }
+  };
 
   const fetchPayWaveTerminals = async () => {
     if (!machine?.id) return;
@@ -129,7 +164,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
   const addPayWaveTerminal = () => {
     if (payWaveTerminals.length < 6) {
-      // Optimistic update
       const newTerminals = [...payWaveTerminals, { name: '', terminal_number: '' }];
       setPayWaveTerminals(newTerminals);
     } else {
@@ -143,14 +177,12 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
   const removePayWaveTerminal = (index: number) => {
     if (payWaveTerminals.length > 1) {
-      // Optimistic update
       const newTerminals = payWaveTerminals.filter((_, i) => i !== index);
       setPayWaveTerminals(newTerminals);
     }
   };
 
   const updatePayWaveTerminal = (index: number, field: 'name' | 'terminal_number', value: string) => {
-    // Optimistic update
     const newTerminals = [...payWaveTerminals];
     newTerminals[index] = { ...newTerminals[index], [field]: value };
     setPayWaveTerminals(newTerminals);
@@ -158,7 +190,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
 
   const savePayWaveTerminalsLocal = async (machineId: string) => {
     try {
-      // Delete existing terminals for this machine
       if (machine?.id) {
         await supabase
           .from('machine_paywave_terminals')
@@ -166,7 +197,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           .eq('machine_id', machineId);
       }
 
-      // Filter out empty terminals
       const validTerminals = payWaveTerminals.filter(terminal => 
         terminal.name.trim() || terminal.terminal_number.trim()
       );
@@ -176,7 +206,6 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         return;
       }
 
-      // Insert new terminals
       const terminalsToInsert = validTerminals.map(terminal => ({
         machine_id: machineId,
         name: terminal.name.trim(),
@@ -197,6 +226,41 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       }
     } catch (error) {
       console.error('❌ Error in savePayWaveTerminalsLocal:', error);
+    }
+  };
+
+  // NEW: Save rotation settings
+  const saveRotationSettings = async (machineId: string) => {
+    try {
+      if (!formData.rotation_period) {
+        console.log('No rotation period set, skipping rotation settings');
+        return;
+      }
+
+      const rotationData = {
+        machine_id: machineId,
+        rotation_period: parseInt(formData.rotation_period),
+        rotation_threshold: parseInt(formData.rotation_threshold) || 300,
+        last_rotation_date: new Date().toISOString() // Set current date as last rotation
+      };
+
+      const { error } = await supabase
+        .from('machine_rotations')
+        .upsert(rotationData, { 
+          onConflict: 'machine_id',
+          ignoreDuplicates: false 
+        });
+
+      if (error) {
+        console.error('❌ Error saving rotation settings:', error);
+        if (!error.message.includes('does not exist')) {
+          throw error;
+        }
+      } else {
+        console.log('✅ Rotation settings saved successfully');
+      }
+    } catch (error) {
+      console.error('❌ Error in saveRotationSettings:', error);
     }
   };
 
@@ -306,6 +370,25 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
       }
     }
 
+    // NEW: Validate rotation settings
+    if (formData.rotation_period && !['3', '6', '12'].includes(formData.rotation_period)) {
+      toast({ 
+        title: 'Validation Error', 
+        description: 'Rotation period must be 3, 6, or 12 months',
+        variant: 'destructive' 
+      });
+      return;
+    }
+
+    if (formData.rotation_period && (parseInt(formData.rotation_threshold) < 1)) {
+      toast({ 
+        title: 'Validation Error', 
+        description: 'Rotation threshold must be at least $1',
+        variant: 'destructive' 
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const machineData = {
@@ -332,6 +415,9 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         // Save PayWave terminals for existing machine
         await savePayWaveTerminalsLocal(machineId);
         
+        // NEW: Save rotation settings for existing machine
+        await saveRotationSettings(machineId);
+        
         toast({ title: 'Success', description: 'Machine updated successfully!' });
       } else {
         // Creating new machine
@@ -347,18 +433,22 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
           throw new Error('Failed to get machine ID after creation');
         }
         
+        // NEW: Save rotation settings for new machine
+        await saveRotationSettings(machineId);
+        
         toast({ title: 'Success', description: 'Machine added successfully!' });
       }
       
       // Emit custom event to notify other components about machine update FIRST
-      // This ensures immediate UI updates before the slower refreshData() call
       window.dispatchEvent(new CustomEvent('machineUpdated', { 
         detail: { 
           machineId, 
           updatedData: { 
             ...machineData, 
             paywave_terminals: validTerminals,
-            _justUpdated: true // Flag to show "Updated" badge temporarily
+            rotation_period: formData.rotation_period ? parseInt(formData.rotation_period) : null,
+            rotation_threshold: formData.rotation_period ? parseInt(formData.rotation_threshold) : null,
+            _justUpdated: true
           } 
         } 
       }));
@@ -390,13 +480,11 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     if (!machine?.id) return;
 
     try {
-      // Find the prize for optimistic update
       const prize = prizes.find((p) => p.id === prizeId);
       if (!prize) return;
 
-      // Create optimistic stock entry
       const optimisticStock: MachineStock = {
-        id: `temp-${Date.now()}`, // Temporary ID
+        id: `temp-${Date.now()}`,
         machine_id: machine.id,
         prize_id: prizeId,
         quantity,
@@ -404,10 +492,8 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         prizes: prize
       };
 
-      // Optimistic update - add to local state immediately
       setMachineStock(prev => [...prev, optimisticStock]);
 
-      // Background database update
       const { data, error } = await supabase
         .from('machine_stock')
         .insert([{ machine_id: machine.id, prize_id: prizeId, quantity, notes }])
@@ -415,12 +501,10 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         .single();
 
       if (error) {
-        // Revert optimistic update on error
         setMachineStock(prev => prev.filter(stock => stock.id !== optimisticStock.id));
         throw error;
       }
 
-      // Replace temporary entry with real database entry
       setMachineStock(prev => 
         prev.map(stock => 
           stock.id === optimisticStock.id 
@@ -429,16 +513,13 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         )
       );
 
-      // Update prize stock
       if (prize) {
         const newStock = Math.max(0, prize.stock_quantity - quantity);
         await supabase.from('prizes').update({ stock_quantity: newStock }).eq('id', prizeId);
       }
 
-      // Refresh data in background
       refreshData();
       
-      // Emit event for real-time updates
       window.dispatchEvent(new CustomEvent('machineStockUpdated', { 
         detail: { machineId: machine.id, type: 'prize_added' } 
       }));
@@ -454,13 +535,11 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
     if (!machine?.id) return;
 
     try {
-      // Find the part for optimistic update
       const part = parts.find((p) => p.id === partId);
       if (!part) return;
 
-      // Create optimistic part entry
       const optimisticPart: MachinePart = {
-        id: `temp-${Date.now()}`, // Temporary ID
+        id: `temp-${Date.now()}`,
         machine_id: machine.id,
         part_id: partId,
         quantity,
@@ -468,10 +547,8 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         parts: part
       };
 
-      // Optimistic update - add to local state immediately
       setMachineParts(prev => [...prev, optimisticPart]);
 
-      // Background database update
       const { data, error } = await supabase
         .from('machine_parts')
         .insert([{ machine_id: machine.id, part_id: partId, quantity, notes }])
@@ -479,12 +556,10 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         .single();
 
       if (error) {
-        // Revert optimistic update on error
         setMachineParts(prev => prev.filter(part => part.id !== optimisticPart.id));
         throw error;
       }
 
-      // Replace temporary entry with real database entry
       setMachineParts(prev => 
         prev.map(part => 
           part.id === optimisticPart.id 
@@ -493,16 +568,13 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
         )
       );
 
-      // Update part stock
       if (part) {
         const newStock = Math.max(0, part.stock_quantity - quantity);
         await supabase.from('parts').update({ stock_quantity: newStock }).eq('id', partId);
       }
 
-      // Refresh data in background
       refreshData();
       
-      // Emit event for real-time updates
       window.dispatchEvent(new CustomEvent('machineStockUpdated', { 
         detail: { machineId: machine.id, type: 'part_added' } 
       }));
@@ -516,25 +588,20 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
   // Optimistic prize removal
   const removePrizeFromMachine = async (stockId: string) => {
     try {
-      // Optimistic update - remove from local state immediately
       const stockToRemove = machineStock.find(stock => stock.id === stockId);
       setMachineStock(prev => prev.filter(stock => stock.id !== stockId));
 
-      // Background database update
       const { error } = await supabase.from('machine_stock').delete().eq('id', stockId);
       
       if (error) {
-        // Revert optimistic update on error
         if (stockToRemove) {
           setMachineStock(prev => [...prev, stockToRemove]);
         }
         throw error;
       }
 
-      // Refresh data in background
       refreshData();
       
-      // Emit event for real-time updates
       window.dispatchEvent(new CustomEvent('machineStockUpdated', { 
         detail: { machineId: machine.id, type: 'prize_removed' } 
       }));
@@ -548,28 +615,23 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
   // Optimistic part removal
   const removePartFromMachine = async (partStockId: string) => {
     try {
-      // Optimistic update - remove from local state immediately
       const partToRemove = machineParts.find(part => part.id === partStockId);
       setMachineParts(prev => prev.filter(part => part.id !== partStockId));
 
-      // Background database update
       const { error } = await supabase
         .from('machine_parts')
         .delete()
         .eq('id', partStockId);
 
       if (error) {
-        // Revert optimistic update on error
         if (partToRemove) {
           setMachineParts(prev => [...prev, partToRemove]);
         }
         throw error;
       }
 
-      // Refresh data in background
       refreshData();
       
-      // Emit event for real-time updates
       window.dispatchEvent(new CustomEvent('machineStockUpdated', { 
         detail: { machineId: machine.id, type: 'part_removed' } 
       }));
@@ -710,6 +772,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
             <Tabs defaultValue="basic" className="w-full">
                 <TabsList>
                     <TabsTrigger value="basic">Basic Info</TabsTrigger>
+                    <TabsTrigger value="rotation">Rotation Schedule</TabsTrigger>
                     <TabsTrigger value="paywave">PayWave Terminals</TabsTrigger>
                     {machine && <TabsTrigger value="prizes">Prizes</TabsTrigger>}
                     {machine && <TabsTrigger value="parts">Parts</TabsTrigger>}
@@ -733,7 +796,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
                                 id="type"
                                 value={formData.type}
                                 onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                                placeholder="e.g., Claw Machine, Arcade Game"
+                                placeholder="e.g., Claw Machine, Arcade Game, Pinball, Video Game"
                                 required
                             />
                         </div>
@@ -799,6 +862,71 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
                             </Button>
                         </div>
                     </form>
+                </TabsContent>
+
+                <TabsContent value="rotation" className="space-y-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-2">
+                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                Machine Rotation Schedule
+                            </CardTitle>
+                            <p className="text-sm text-gray-600">
+                                Set up automatic rotation alerts based on time periods and earnings performance
+                            </p>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div>
+                                <Label>Rotation Period (Optional)</Label>
+                                <Select 
+                                    value={formData.rotation_period} 
+                                    onValueChange={(value) => setFormData({ ...formData, rotation_period: value as '' | '3' | '6' | '12' })}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select rotation schedule" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="">No automatic rotation</SelectItem>
+                                        <SelectItem value="3">Every 3 months</SelectItem>
+                                        <SelectItem value="6">Every 6 months</SelectItem>
+                                        <SelectItem value="12">Every 12 months</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Choose how often this machine should be considered for rotation
+                                </p>
+                            </div>
+
+                            {formData.rotation_period && (
+                                <div>
+                                    <Label>Earnings Threshold ($/month)</Label>
+                                    <Input
+                                        type="number"
+                                        min="1"
+                                        value={formData.rotation_threshold}
+                                        onChange={(e) => setFormData({ ...formData, rotation_threshold: e.target.value })}
+                                        placeholder="300"
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Machine will be flagged for immediate rotation if monthly earnings fall below this amount
+                                    </p>
+                                </div>
+                            )}
+
+                            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                                <h4 className="font-semibold text-blue-800 mb-2">How Rotation Alerts Work</h4>
+                                <ul className="text-sm text-blue-700 space-y-1">
+                                    <li>• System monitors machine earnings from reports</li>
+                                    <li>• Calculates weekly/monthly performance automatically</li>
+                                    <li>• Flags machines that earn below threshold for immediate rotation</li>
+                                    <li>• Also flags machines when rotation period expires</li>
+                                    <li>• View all rotation alerts in the Machine Rotations section</li>
+                                </ul>
+                            </div>
+                        </CardContent>
+                    </Card>
                 </TabsContent>
 
                 <TabsContent value="paywave" className="space-y-4">

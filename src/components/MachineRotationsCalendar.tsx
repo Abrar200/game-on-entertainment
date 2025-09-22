@@ -17,7 +17,8 @@ import {
   TrendingUp,
   Clock,
   CheckCircle,
-  Settings
+  Settings,
+  Plus // FIXED: Added missing Plus import
 } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import { supabase } from '@/lib/supabase';

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { AlertTriangle, Wrench, Calendar, TrendingUp, X, CheckCircle } from 'lucide-react';
+import { AlertTriangle, Wrench, Calendar, TrendingUp, X, CheckCircle, DollarSign, TrendingDown } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAppContext } from '@/contexts/AppContext';
 import { useToast } from '@/hooks/use-toast';
@@ -34,6 +34,17 @@ interface MachinePartUsage {
   dismissed_at?: string;
 }
 
+// NEW: Payout issue interface
+interface MachinePayoutIssue {
+  machine_id: string;
+  machine_name: string;
+  venue_name?: string;
+  average_payout: number;
+  payout_type: 'too_high' | 'too_low';
+  reports_count: number;
+  problem_severity: 'high' | 'medium' | 'low';
+}
+
 interface DismissAlert {
   machine_id: string;
   problem_type: string;
@@ -45,15 +56,106 @@ const MachineProblemsTracker: React.FC = () => {
   const { machines, venues } = useAppContext();
   const { toast } = useToast();
   const [problemMachines, setProblemMachines] = useState<MachinePartUsage[]>([]);
+  const [payoutProblems, setPayoutProblems] = useState<MachinePayoutIssue[]>([]); // NEW
   const [loading, setLoading] = useState(true);
   const [showDismissDialog, setShowDismissDialog] = useState(false);
   const [showServiceDialog, setShowServiceDialog] = useState(false);
-  const [selectedMachine, setSelectedMachine] = useState<MachinePartUsage | null>(null);
+  const [selectedMachine, setSelectedMachine] = useState<any>(null);
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     analyzeMachinePartUsage();
+    analyzePayoutIssues(); // NEW
   }, [machines]);
+
+  // NEW: Analyze payout issues
+  const analyzePayoutIssues = async () => {
+    try {
+      console.log('📊 Analyzing machine payout issues...');
+      
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const { data: recentReports, error } = await supabase
+        .from('machine_reports')
+        .select('machine_id, money_collected, prize_value, created_at')
+        .gte('created_at', thirtyDaysAgo.toISOString());
+
+      if (error) {
+        console.error('Error fetching reports for payout analysis:', error);
+        return;
+      }
+
+      if (!recentReports || recentReports.length === 0) {
+        setPayoutProblems([]);
+        return;
+      }
+
+      // Group by machine and calculate average payout
+      const machinePayouts = new Map<string, { payouts: number[], totalReports: number }>();
+      
+      recentReports.forEach(report => {
+        if (report.money_collected > 0 && report.prize_value > 0) {
+          const payout = (report.prize_value / report.money_collected) * 100;
+          
+          if (!machinePayouts.has(report.machine_id)) {
+            machinePayouts.set(report.machine_id, { payouts: [], totalReports: 0 });
+          }
+          
+          const machineData = machinePayouts.get(report.machine_id)!;
+          machineData.payouts.push(payout);
+          machineData.totalReports++;
+        }
+      });
+
+      const payoutIssues: MachinePayoutIssue[] = [];
+
+      machinePayouts.forEach((data, machineId) => {
+        const machine = machines.find(m => m.id === machineId);
+        if (!machine || data.payouts.length < 3) return; // Need at least 3 reports
+
+        const venue = venues.find(v => v.id === machine.venue_id);
+        const averagePayout = data.payouts.reduce((sum, p) => sum + p, 0) / data.payouts.length;
+
+        // Check if dismissed
+        const highPayoutKey = `${machineId}_payout_high`;
+        const lowPayoutKey = `${machineId}_payout_low`;
+        
+        let issueType: 'too_high' | 'too_low' | null = null;
+        let severity: 'high' | 'medium' | 'low' = 'medium';
+
+        if (averagePayout > 30) {
+          if (!dismissedAlerts.has(highPayoutKey)) {
+            issueType = 'too_high';
+            severity = averagePayout > 40 ? 'high' : 'medium';
+          }
+        } else if (averagePayout < 10) {
+          if (!dismissedAlerts.has(lowPayoutKey)) {
+            issueType = 'too_low';
+            severity = averagePayout < 5 ? 'high' : 'medium';
+          }
+        }
+
+        if (issueType) {
+          payoutIssues.push({
+            machine_id: machineId,
+            machine_name: machine.name,
+            venue_name: venue?.name,
+            average_payout: averagePayout,
+            payout_type: issueType,
+            reports_count: data.totalReports,
+            problem_severity: severity
+          });
+        }
+      });
+
+      setPayoutProblems(payoutIssues);
+      console.log('✅ Payout analysis completed:', payoutIssues.length, 'issues found');
+
+    } catch (error) {
+      console.error('Error analyzing payout issues:', error);
+    }
+  };
 
   const loadDismissedAlerts = async () => {
     try {
@@ -80,10 +182,8 @@ const MachineProblemsTracker: React.FC = () => {
     try {
       setLoading(true);
       
-      // Load dismissed alerts first
       await loadDismissedAlerts();
       
-      // Get all machine parts used in the last 12 months
       const twelveMonthsAgo = new Date();
       twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
 
@@ -100,12 +200,11 @@ const MachineProblemsTracker: React.FC = () => {
         return;
       }
 
-      // Also check for recent job completions that might indicate resolved issues
       const { data: recentJobs, error: jobsError } = await supabase
         .from('jobs')
         .select('machine_id, status, created_at, scheduled_date')
         .eq('status', 'completed')
-        .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()); // Last 7 days
+        .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
 
       if (jobsError) {
         console.warn('Error fetching recent jobs:', jobsError);
@@ -113,7 +212,6 @@ const MachineProblemsTracker: React.FC = () => {
 
       const recentlyServicedMachines = new Set(recentJobs?.map(job => job.machine_id) || []);
 
-      // Group by machine and analyze
       const machineUsageMap = new Map<string, MachinePart[]>();
       
       machinePartsData?.forEach((machinePart: MachinePart) => {
@@ -124,7 +222,6 @@ const MachineProblemsTracker: React.FC = () => {
         machineUsageMap.get(machineId)?.push(machinePart);
       });
 
-      // Analyze each machine
       const problemMachinesData: MachinePartUsage[] = [];
 
       machineUsageMap.forEach((parts, machineId) => {
@@ -133,16 +230,13 @@ const MachineProblemsTracker: React.FC = () => {
 
         const venue = venues.find(v => v.id === machine.venue_id);
         
-        // Count total parts used (considering quantity)
         const totalPartsUsed = parts.reduce((sum, part) => sum + part.quantity, 0);
         
-        // Calculate total cost
         const totalCost = parts.reduce((sum, part) => {
           const cost = part.part?.cost_price || 0;
           return sum + (cost * part.quantity);
         }, 0);
 
-        // Determine severity
         let severity: 'high' | 'medium' | 'low' = 'low';
         if (totalPartsUsed >= 5) {
           severity = 'high';
@@ -150,14 +244,10 @@ const MachineProblemsTracker: React.FC = () => {
           severity = 'medium';
         }
 
-        // Check if this alert is dismissed
         const alertKey = `${machineId}_parts_usage`;
         const isDismissed = dismissedAlerts.has(alertKey);
-
-        // Check if machine was recently serviced (within last 7 days)
         const wasRecentlyServiced = recentlyServicedMachines.has(machineId);
 
-        // Only include machines that used 3 or more parts, are not dismissed, and weren't recently serviced
         if (totalPartsUsed >= 3 && !isDismissed && !wasRecentlyServiced) {
           problemMachinesData.push({
             machine_id: machineId,
@@ -174,7 +264,6 @@ const MachineProblemsTracker: React.FC = () => {
         }
       });
 
-      // Sort by severity and part count
       problemMachinesData.sort((a, b) => {
         const severityOrder = { high: 3, medium: 2, low: 1 };
         if (severityOrder[a.problem_severity] !== severityOrder[b.problem_severity]) {
@@ -185,7 +274,6 @@ const MachineProblemsTracker: React.FC = () => {
 
       setProblemMachines(problemMachinesData);
 
-      // Send notification if there are high-severity machines
       const highSeverityMachines = problemMachinesData.filter(m => m.problem_severity === 'high');
       if (highSeverityMachines.length > 0) {
         try {
@@ -212,8 +300,8 @@ const MachineProblemsTracker: React.FC = () => {
     }
   };
 
-  const handleDismissAlert = (machine: MachinePartUsage) => {
-    setSelectedMachine(machine);
+  const handleDismissAlert = (machine: any, problemType: string) => {
+    setSelectedMachine({ ...machine, problemType });
     setShowDismissDialog(true);
   };
 
@@ -221,37 +309,37 @@ const MachineProblemsTracker: React.FC = () => {
     if (!selectedMachine) return;
 
     try {
-      console.log('📝 Dismissing alert for machine:', selectedMachine.machine_name);
+      console.log('📝 Dismissing alert for machine:', selectedMachine.machine_name, 'type:', selectedMachine.problemType);
 
-      // Try to insert into machine_problems table
       const { error } = await supabase
         .from('machine_problems')
         .insert([{
           machine_id: selectedMachine.machine_id,
-          problem_type: 'parts_usage',
+          problem_type: selectedMachine.problemType,
           dismissed_at: new Date().toISOString(),
-          dismissed_by: 'current_user' // You can replace with actual user ID
+          dismissed_by: 'current_user'
         }]);
 
       if (error) {
-        // If table doesn't exist, create a simple dismissed alerts tracking
         console.warn('machine_problems table not found, using localStorage fallback');
         
-        const alertKey = `${selectedMachine.machine_id}_parts_usage`;
+        const alertKey = `${selectedMachine.machine_id}_${selectedMachine.problemType}`;
         const newDismissed = new Set(dismissedAlerts);
         newDismissed.add(alertKey);
         setDismissedAlerts(newDismissed);
         
-        // Store in localStorage as fallback
         const dismissedData = Array.from(newDismissed);
         localStorage.setItem('dismissedMachineAlerts', JSON.stringify(dismissedData));
       } else {
-        // Reload dismissed alerts
         await loadDismissedAlerts();
       }
 
-      // Remove from current problem machines
-      setProblemMachines(prev => prev.filter(m => m.machine_id !== selectedMachine.machine_id));
+      // Remove from appropriate problem list
+      if (selectedMachine.problemType === 'parts_usage') {
+        setProblemMachines(prev => prev.filter(m => m.machine_id !== selectedMachine.machine_id));
+      } else if (selectedMachine.problemType.includes('payout')) {
+        setPayoutProblems(prev => prev.filter(m => m.machine_id !== selectedMachine.machine_id));
+      }
 
       toast({
         title: 'Alert Dismissed',
@@ -271,30 +359,28 @@ const MachineProblemsTracker: React.FC = () => {
     }
   };
 
-  const handleScheduleMaintenance = (machine: MachinePartUsage) => {
+  const handleScheduleMaintenance = (machine: any) => {
     setSelectedMachine(machine);
     setShowServiceDialog(true);
   };
 
   const handleServiceScheduled = async () => {
     if (selectedMachine) {
-      // Auto-dismiss the alert when service is scheduled
       try {
         console.log('📝 Auto-dismissing alert for scheduled maintenance:', selectedMachine.machine_name);
 
-        // Mark as dismissed in database
+        const problemType = selectedMachine.problemType || 'parts_usage';
         const { error } = await supabase
           .from('machine_problems')
           .insert([{
             machine_id: selectedMachine.machine_id,
-            problem_type: 'parts_usage',
+            problem_type: problemType,
             dismissed_at: new Date().toISOString(),
             dismissed_by: 'auto_service_scheduled'
           }]);
 
         if (error) {
-          // Fallback to localStorage
-          const alertKey = `${selectedMachine.machine_id}_parts_usage`;
+          const alertKey = `${selectedMachine.machine_id}_${problemType}`;
           const newDismissed = new Set(dismissedAlerts);
           newDismissed.add(alertKey);
           setDismissedAlerts(newDismissed);
@@ -305,15 +391,14 @@ const MachineProblemsTracker: React.FC = () => {
           await loadDismissedAlerts();
         }
 
-        // Remove from current problem machines
         setProblemMachines(prev => prev.filter(m => m.machine_id !== selectedMachine.machine_id));
+        setPayoutProblems(prev => prev.filter(m => m.machine_id !== selectedMachine.machine_id));
 
         toast({
           title: 'Service Scheduled',
           description: `Maintenance scheduled for ${selectedMachine.machine_name}. Alert has been automatically dismissed.`,
         });
 
-        // Trigger a refresh of the business health calculation
         window.dispatchEvent(new CustomEvent('machineProblemsUpdated'));
         
       } catch (error) {
@@ -329,7 +414,6 @@ const MachineProblemsTracker: React.FC = () => {
     setSelectedMachine(null);
   };
 
-  // Load dismissed alerts from localStorage on component mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem('dismissedMachineAlerts');
@@ -376,13 +460,15 @@ const MachineProblemsTracker: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-gray-500">Analyzing machine part usage...</p>
+          <p className="text-gray-500">Analyzing machine part usage and payout performance...</p>
         </CardContent>
       </Card>
     );
   }
 
-  if (problemMachines.length === 0) {
+  const totalProblems = problemMachines.length + payoutProblems.length;
+
+  if (totalProblems === 0) {
     return (
       <Card>
         <CardHeader>
@@ -394,7 +480,7 @@ const MachineProblemsTracker: React.FC = () => {
         <CardContent>
           <p className="text-green-600 font-medium">✅ All machines are operating normally!</p>
           <p className="text-gray-500 text-sm mt-1">
-            No machines have used 3+ parts in the last 12 months or have been recently serviced.
+            No machines have maintenance issues or payout problems.
           </p>
         </CardContent>
       </Card>
@@ -410,12 +496,13 @@ const MachineProblemsTracker: React.FC = () => {
             Machine Problems Alert
           </CardTitle>
           <p className="text-orange-700 text-sm">
-            {problemMachines.length} machine(s) showing signs of problems (3+ parts used in 12 months)
+            {totalProblems} machine(s) showing problems ({problemMachines.length} maintenance, {payoutProblems.length} payout issues)
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Parts Usage Problems */}
           {problemMachines.map((machine) => (
-            <Card key={machine.machine_id} className="border">
+            <Card key={`parts_${machine.machine_id}`} className="border">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <div>
@@ -427,12 +514,12 @@ const MachineProblemsTracker: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Badge className={getSeverityColor(machine.problem_severity)}>
                       {getSeverityIcon(machine.problem_severity)}
-                      {machine.problem_severity.toUpperCase()}
+                      HIGH PARTS USAGE
                     </Badge>
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => handleDismissAlert(machine)}
+                      onClick={() => handleDismissAlert(machine, 'parts_usage')}
                       className="text-gray-600 hover:text-gray-800"
                     >
                       <X className="h-4 w-4" />
@@ -499,7 +586,93 @@ const MachineProblemsTracker: React.FC = () => {
                   <Button 
                     size="sm" 
                     variant="outline"
-                    onClick={() => handleDismissAlert(machine)}
+                    onClick={() => handleDismissAlert(machine, 'parts_usage')}
+                  >
+                    <X className="h-4 w-4 mr-1" />
+                    Dismiss Alert
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+
+          {/* NEW: Payout Problems */}
+          {payoutProblems.map((machine) => (
+            <Card key={`payout_${machine.machine_id}`} className="border border-purple-200">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg">{machine.machine_name}</CardTitle>
+                    {machine.venue_name && (
+                      <p className="text-sm text-gray-600">📍 {machine.venue_name}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge className={`${getSeverityColor(machine.problem_severity)} border-purple-300`}>
+                      <DollarSign className="h-4 w-4 mr-1" />
+                      {machine.payout_type === 'too_high' ? 'PAYOUT TOO HIGH' : 'PAYOUT TOO LOW'}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleDismissAlert(machine, `payout_${machine.payout_type}`)}
+                      className="text-gray-600 hover:text-gray-800"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <span className="text-gray-500">Average Payout:</span>
+                    <div className={`font-semibold ${machine.payout_type === 'too_high' ? 'text-red-600' : 'text-orange-600'}`}>
+                      {machine.average_payout.toFixed(1)}%
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Target Range:</span>
+                    <div className="font-semibold text-green-600">
+                      10% - 30%
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Reports Count:</span>
+                    <div className="font-semibold">
+                      {machine.reports_count} reports
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-purple-50 p-3 rounded border border-purple-200">
+                  <p className="text-purple-800 text-sm font-medium">
+                    {machine.payout_type === 'too_high' 
+                      ? '⚠️ High payout percentage may indicate loose claw settings or prizes too cheap' 
+                      : '⚠️ Low payout percentage may indicate tight claw settings or prizes too expensive'
+                    }
+                  </p>
+                  <p className="text-purple-700 text-xs mt-1">
+                    {machine.payout_type === 'too_high' 
+                      ? 'Consider tightening claw strength or increasing prize costs'
+                      : 'Consider loosening claw strength or reducing prize costs'
+                    }
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-2 border-t">
+                  <Button 
+                    size="sm" 
+                    onClick={() => handleScheduleMaintenance(machine)}
+                    className="bg-purple-600 hover:bg-purple-700 text-white"
+                  >
+                    <Wrench className="h-4 w-4 mr-1" />
+                    Schedule Adjustment
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="outline"
+                    onClick={() => handleDismissAlert(machine, `payout_${machine.payout_type}`)}
                   >
                     <X className="h-4 w-4 mr-1" />
                     Dismiss Alert
@@ -532,17 +705,9 @@ const MachineProblemsTracker: React.FC = () => {
                   ⚠️ Warning: This will hide the alert from the dashboard
                 </p>
                 <p className="text-yellow-700 text-sm mt-1">
-                  The alert will not reappear unless new maintenance issues are detected.
+                  The alert will not reappear unless new issues are detected.
                 </p>
               </div>
-              
-              {selectedMachine && (
-                <div className="bg-gray-50 rounded-lg p-3 text-sm">
-                  <p><strong>Machine:</strong> {selectedMachine.machine_name}</p>
-                  <p><strong>Problem:</strong> High parts usage ({selectedMachine.part_count_12_months} parts in 12 months)</p>
-                  <p><strong>Total Cost:</strong> ${selectedMachine.total_cost.toFixed(2)}</p>
-                </div>
-              )}
             </div>
           </div>
 

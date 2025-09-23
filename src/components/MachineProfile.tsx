@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { X, MapPin, Calendar, Wrench, DollarSign, FileText, Gift, TrendingUp, Loader2 } from 'lucide-react';
+import { X, MapPin, Calendar, Wrench, DollarSign, FileText, Gift, TrendingUp, Loader2, History } from 'lucide-react';
 import { MachineBarcodeDisplay } from './MachineBarcodeDisplay';
 import { MachineEditDialog } from './MachineEditDialog';
 import { ServiceScheduleDialog } from './ServiceScheduleDialog';
@@ -11,6 +11,7 @@ import { ReportsContent } from './ReportsContent';
 import MachineReportForm from './MachineReportForm';
 import AddPrizesToMachine from './AddPrizesToMachine';
 import PayWaveDisplay from './PayWaveDisplay';
+import MachineMaintenanceHistory from './MachineMaintenanceHistory';
 import { createImageWithFallback } from '@/lib/imageUtils';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -53,6 +54,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
   const [showServiceDialog, setShowServiceDialog] = useState(false);
   const [showCreateReport, setShowCreateReport] = useState(false);
   const [showAddPrizes, setShowAddPrizes] = useState(false);
+  const [showMaintenanceHistory, setShowMaintenanceHistory] = useState(false);
   const [machineStats, setMachineStats] = useState<MachineStats>({
     totalEarnings: 0,
     totalReports: 0,
@@ -166,6 +168,10 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
 
   const handleAddPrizes = () => {
     setShowAddPrizes(true);
+  };
+
+  const handleViewMaintenanceHistory = () => {
+    setShowMaintenanceHistory(true);
   };
 
   const handleServiceScheduled = () => {
@@ -394,7 +400,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
             </div>
 
             {/* Action Buttons */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 pt-4 border-t">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 pt-4 border-t">
               <Button
                 className="bg-purple-600 hover:bg-purple-700 text-white"
                 onClick={handleAddPrizes}
@@ -420,6 +426,13 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                 onClick={handleScheduleService}
               >
                 🔧 Schedule Service
+              </Button>
+              <Button
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={handleViewMaintenanceHistory}
+              >
+                <History className="h-4 w-4 mr-2" />
+                Maintenance History
               </Button>
               <Button
                 variant="outline"
@@ -456,6 +469,20 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
           </DialogHeader>
           <div className="mt-4">
             <ReportsContent />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showMaintenanceHistory} onOpenChange={setShowMaintenanceHistory}>
+        <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wrench className="h-5 w-5" />
+              Maintenance History - {machine.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4">
+            <MachineMaintenanceHistory machineId={machine.id} machineName={machine.name} />
           </div>
         </DialogContent>
       </Dialog>

@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Search, Edit, Trash2, Eye, Package, MapPin, Calendar, AlertTriangle } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
-import EquipmentEditDialog from '@/components/EquipmentEditDialog';
+import { EquipmentEditDialog } from '@/components/EquipmentEditDialog';
 import EquipmentProfile from '@/components/EquipmentProfile';
 import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import { useToast } from '@/hooks/use-toast';
@@ -385,7 +385,7 @@ const EquipmentHireManager: React.FC = () => {
                   {item.image_url ? (
                     <div className="flex-shrink-0">
                       <img
-                        {...createImageWithFallback(item.image_url, item.name, 'equipment')}
+                        {...createImageWithFallback(item.image_url, item.name)}
                         className="w-16 h-16 object-cover rounded border-2 border-gray-200"
                         crossOrigin="anonymous"
                       />

@@ -6,7 +6,7 @@ import {
   Bell, Settings, Plus, FileText, Gamepad2, MapPin, Gift, Wrench, 
   AlertTriangle, BookOpen, Download, ChevronDown, Database, Users, 
   Home, BarChart3, History, LogOut, Upload, Map, Mail, Shield,
-  Crown, Eye, User, Loader2, Cog // Add Cog for parts icon
+  Crown, Eye, User, Loader2, Cog, Truck // Added Truck for equipment hire icon
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -160,6 +160,19 @@ const Header: React.FC<HeaderProps> = ({
               <Home className="h-4 w-4 mr-2" />
               Dashboard
             </Button>
+            
+            {/* Equipment Hire - Standalone button */}
+            {canAccessView('equipment-hire') && (
+              <Button 
+                onClick={createNavHandler('equipment-hire', 'Equipment Hire')}
+                className="bg-orange-600 hover:bg-orange-700 text-white font-semibold"
+                type="button"
+                disabled={loggingOut}
+              >
+                <Truck className="h-4 w-4 mr-2" />
+                Equipment Hire
+              </Button>
+            )}
             
             {/* Map - Only if user can view venues */}
             {canAccessView('map') && (

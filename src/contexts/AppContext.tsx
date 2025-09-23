@@ -20,6 +20,7 @@ interface PayWaveTerminal {
 }
 
 interface Machine {
+  _justUpdated: any;
   id: string;
   name: string;
   type: string;
@@ -33,6 +34,35 @@ interface Machine {
   serial_number?: string;
   barcode?: string;
   paywave_terminals?: PayWaveTerminal[];
+}
+
+
+interface Equipment {
+  id: string;
+  name: string;
+  description?: string;
+  category: string;
+  serial_number?: string;
+  asset_tag?: string;
+  brand?: string;
+  model?: string;
+  purchase_date?: string;
+  purchase_cost?: number;
+  current_value?: number;
+  condition: string;
+  status: string;
+  venue_id?: string;
+  hired_date?: string;
+  expected_return_date?: string;
+  notes?: string;
+  image_url?: string;
+  created_at: string;
+  updated_at: string;
+  venue?: {
+    id: string;
+    name: string;
+    address?: string;
+  };
 }
 
 export const findMachineByBarcode = async (barcode: string): Promise<Machine> => {
@@ -164,6 +194,11 @@ interface AppContextType {
   updatePrize: (id: string, prize: Partial<Prize>) => Promise<void>;
   updatePrizeStock: (id: string, quantity: number) => Promise<void>;
   addMachineStock: (stock: MachineStock) => Promise<void>;
+  equipment: Equipment[];
+  addEquipment: (equipment: Omit<Equipment, 'id' | 'created_at' | 'updated_at'>) => Promise<void>;
+  updateEquipment: (id: string, equipment: Partial<Equipment>) => Promise<void>;
+  deleteEquipment: (id: string) => Promise<void>;
+  refreshEquipment: () => Promise<void>;
   refreshData: () => Promise<void>;
   companyLogo: string;
   setCompanyLogo: (logo: string) => void;
@@ -219,7 +254,85 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [companyLogo, setCompanyLogo] = useState('');
   const [selectedMachineForHistory, setSelectedMachineForHistory] = useState<Machine | null>(null);
   const [parts, setParts] = useState<Part[]>([]);
+  const [equipment, setEquipment] = useState<Equipment[]>([]);
   const { toast } = useToast();
+
+  const addEquipment = async (equipmentData: Omit<Equipment, 'id' | 'created_at' | 'updated_at'>) => {
+    try {
+      console.log('Adding equipment with data:', equipmentData);
+  
+      const { error } = await supabase
+        .from('equipment_hire')
+        .insert([equipmentData]);
+  
+      if (error) {
+        console.error('Supabase error:', error);
+        throw new Error(`Database error: ${error.message}`);
+      }
+  
+      console.log('Successfully added equipment');
+      await refreshData();
+  
+    } catch (error) {
+      console.error('Error in addEquipment:', error);
+      throw error;
+    }
+  };
+  
+  const updateEquipment = async (id: string, equipmentData: Partial<Equipment>) => {
+    try {
+      const { error } = await supabase
+        .from('equipment_hire')
+        .update(equipmentData)
+        .eq('id', id);
+  
+      if (error) throw error;
+      
+      await refreshData();
+      toast({ title: 'Success', description: 'Equipment updated successfully' });
+    } catch (error) {
+      console.error('Error updating equipment:', error);
+      throw error;
+    }
+  };
+  
+  const deleteEquipment = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('equipment_hire')
+        .delete()
+        .eq('id', id);
+  
+      if (error) throw error;
+      
+      await refreshData();
+    } catch (error) {
+      console.error('Error deleting equipment:', error);
+      throw error;
+    }
+  };
+  
+  const refreshEquipment = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('equipment_hire')
+        .select(`
+          *,
+          venue:venues(
+            id,
+            name,
+            address
+          )
+        `)
+        .order('created_at', { ascending: false });
+  
+      if (error) throw error;
+      setEquipment(data || []);
+    } catch (error) {
+      console.error('Error refreshing equipment:', error);
+      throw error;
+    }
+  };
 
   const generatePartBarcode = (name: string): string => {
     const cleanName = name.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 8);
@@ -255,15 +368,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const refreshData = async () => {
     try {
-      const [venuesRes, machinesRes, prizesRes, partsRes, reportsRes, stockRes] = await Promise.all([
+      const [venuesRes, machinesRes, prizesRes, partsRes, reportsRes, stockRes, equipmentRes] = await Promise.all([
         supabase.from('venues').select('*'),
         supabase.from('machines').select('*, venues(*), prizes(*)'),
         supabase.from('prizes').select('*'),
         supabase.from('parts').select('*'),
         supabase.from('machine_reports').select('*').order('report_date', { ascending: false }),
-        supabase.from('machine_stock').select('*')
+        supabase.from('machine_stock').select('*'),
+        supabase.from('equipment_hire').select(`
+          *,
+          venue:venues(
+            id,
+            name,
+            address
+          )
+        `)
       ]);
-
+  
       if (venuesRes.data) setVenues(venuesRes.data);
       if (machinesRes.data) {
         setMachines(machinesRes.data.map(m => ({
@@ -276,6 +397,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (partsRes.data) setParts(partsRes.data);
       if (reportsRes.data) setReports(reportsRes.data);
       if (stockRes.data) setMachineStock(stockRes.data);
+      if (equipmentRes.data) setEquipment(equipmentRes.data);
     } catch (error) {
       console.error('Data refresh error:', error);
       toast({ title: 'Error', description: 'Failed to load data', variant: 'destructive' });
@@ -699,6 +821,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const contextValue: AppContextType = {
     sidebarOpen,
+    equipment,
+    addEquipment,
+    updateEquipment,
+    deleteEquipment,
+    refreshEquipment,
     toggleSidebar,
     venues,
     machines,

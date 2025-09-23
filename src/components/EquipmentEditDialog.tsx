@@ -660,3 +660,5 @@ export const EquipmentEditDialog: React.FC<EquipmentEditDialogProps> = ({
     </Dialog>
   );
 };
+
+export default EquipmentEditDialog;

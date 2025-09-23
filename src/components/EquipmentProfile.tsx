@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { X, MapPin, Calendar, Package, DollarSign, Edit, History, FileText, AlertTriangle } from 'lucide-react';
-import EquipmentEditDialog from './EquipmentEditDialog';
+import { EquipmentEditDialog } from './EquipmentEditDialog';
 import { createImageWithFallback } from '@/lib/imageUtils';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -102,7 +102,7 @@ export const EquipmentProfile: React.FC<EquipmentProfileProps> = ({ equipment, o
   };
 
   // Use the shared image utility
-  const equipmentImage = createImageWithFallback(equipment.image_url, equipment.name, 'equipment');
+  const equipmentImage = createImageWithFallback(equipment.image_url, equipment.name);
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {

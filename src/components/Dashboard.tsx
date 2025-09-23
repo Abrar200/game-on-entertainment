@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Building2, Cog, Gift, Package, DollarSign, TrendingUp, AlertTriangle, Plus, Users, Activity, Target, Calendar, ArrowUp, ArrowDown } from 'lucide-react';
+import { Building2, Cog, Gift, Package, DollarSign, TrendingUp, AlertTriangle, Plus, Users, Activity, Target, Calendar, ArrowUp, ArrowDown, Truck } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import MachineProblemsTracker from '@/components/MachineProblemsTracker';
 import { supabase } from '@/lib/supabase';
@@ -56,9 +56,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
     pendingIssues: 0,
     loading: true
   });
+  const [equipmentStats, setEquipmentStats] = useState({
+    totalEquipment: 0,
+    hiredEquipment: 0,
+    availableEquipment: 0,
+    totalValue: 0,
+    loading: true
+  });
 
   useEffect(() => {
     fetchDashboardData();
+    fetchEquipmentStats();
   }, [machines, prizes, parts]);
 
   // Listen for machine problems updates
@@ -77,6 +85,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
       window.removeEventListener('machineProblemsUpdated', handleMachineProblemsUpdate);
     };
   }, []);
+
+  const fetchEquipmentStats = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('equipment_hire')
+        .select('status, current_value, purchase_cost');
+
+      if (error) {
+        console.error('Error fetching equipment stats:', error);
+        return;
+      }
+
+      const totalEquipment = data?.length || 0;
+      const hiredEquipment = data?.filter(e => e.status === 'hired').length || 0;
+      const availableEquipment = data?.filter(e => e.status === 'available').length || 0;
+      const totalValue = data?.reduce((sum, e) => sum + (e.current_value || e.purchase_cost || 0), 0) || 0;
+
+      setEquipmentStats({
+        totalEquipment,
+        hiredEquipment,
+        availableEquipment,
+        totalValue,
+        loading: false
+      });
+    } catch (error) {
+      console.error('Error fetching equipment stats:', error);
+      setEquipmentStats(prev => ({ ...prev, loading: false }));
+    }
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -330,6 +367,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
       case 'add-venue':
         setCurrentView('venues');
         break;
+      case 'add-equipment':
+        setCurrentView('equipment-hire');
+        break;
       default:
         toast({
           title: 'Quick Action',
@@ -531,7 +571,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
       </div>
 
       {/* Operational Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         <Card className="hover:shadow-lg transition-shadow">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Venues</CardTitle>
@@ -595,6 +635,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
             </div>
           </CardContent>
         </Card>
+
+        {/* Equipment Hire Card */}
+        <Card className="hover:shadow-lg transition-shadow">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Equipment Hire</CardTitle>
+            <Truck className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{equipmentStats.totalEquipment}</div>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-xs text-muted-foreground">
+                ${equipmentStats.totalValue.toFixed(0)} value
+              </p>
+              <Badge variant={equipmentStats.hiredEquipment > 0 ? "default" : "secondary"} className="text-xs">
+                {equipmentStats.hiredEquipment} hired
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Quick Actions */}
@@ -606,7 +665,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <Button
               onClick={() => handleQuickAction('add-prize')}
               className="h-20 flex-col bg-purple-600 hover:bg-purple-700 text-white"
@@ -647,6 +706,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
                 <div className="text-xs opacity-90">New location</div>
               </div>
             </Button>
+            <Button
+              onClick={() => handleQuickAction('add-equipment')}
+              className="h-20 flex-col bg-indigo-600 hover:bg-indigo-700 text-white"
+            >
+              <Truck className="h-6 w-6 mb-2" />
+              <div className="text-center">
+                <div className="font-medium">Add Equipment</div>
+                <div className="text-xs opacity-90">Track assets</div>
+              </div>
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -676,6 +745,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
                   <span>Jobs Completed</span>
                   <Badge variant="default">{dashboardStats.completedJobs}</Badge>
                 </div>
+                <div className="flex justify-between text-sm">
+                  <span>Available Equipment</span>
+                  <Badge variant="default">{equipmentStats.availableEquipment}</Badge>
+                </div>
               </div>
             </div>
 
@@ -693,6 +766,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermi
                 <div className="flex justify-between text-sm">
                   <span>Low Stock Items</span>
                   <Badge variant="secondary">{lowStockPrizes + lowStockParts}</Badge>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>Equipment on Hire</span>
+                  <Badge variant="secondary">{equipmentStats.hiredEquipment}</Badge>
                 </div>
               </div>
             </div>

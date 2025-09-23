@@ -21,6 +21,7 @@ import MachineHistoryManager from './MachineHistoryManager';
 import VenueMap from './VenueMap';
 import EmailNotificationManager from './EmailNotificationManager';
 import ViewReportsPage from './ViewReportsPage';
+import EquipmentHireManager from './EquipmentHireManager'; // Add this import
 
 interface AppLayoutProps {
   children?: React.ReactNode;
@@ -216,6 +217,19 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           );
         }
         return <PartsManager />;
+
+      // ADD THIS NEW CASE FOR EQUIPMENT HIRE
+      case 'equipment-hire':
+        if (!canAccessView('equipment-hire')) {
+          return (
+            <AccessDenied 
+              viewName="Equipment Hire" 
+              userRole={userProfile.role}
+              onBackToDashboard={() => setCurrentView('dashboard')}
+            />
+          );
+        }
+        return <EquipmentHireManager />;
         
       case 'download':
         if (!hasPermission('manage_settings')) {

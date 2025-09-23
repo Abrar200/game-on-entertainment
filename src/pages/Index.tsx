@@ -1,6 +1,7 @@
 // src/pages/Index.tsx - Updated with new props
 import React from 'react';
 import AppLayout from '@/components/AppLayout';
+import EquipmentHireManager from '@/components/EquipmentHireManager';
 
 interface IndexProps {
   onLogout: () => void;

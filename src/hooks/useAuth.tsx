@@ -331,21 +331,24 @@ export const useAuth = () => {
         'manage_venues', 'view_venues', 'manage_prizes', 'view_inventory',
         'manage_stock', 'manage_jobs', 'view_jobs', 'create_jobs',
         'update_job_status', 'manage_settings', 'view_analytics',
-        'manage_email_notifications'
+        'manage_email_notifications', 'manage_equipment', 'view_equipment'
       ],
       manager: [
         'view_users',
         'view_earnings', 'manage_machines', 'view_machines',
         'edit_machine_reports', 'manage_venues', 'view_venues',
         'manage_prizes', 'view_inventory', 'manage_stock', 'manage_jobs',
-        'view_jobs', 'create_jobs', 'update_job_status', 'view_analytics'
+        'view_jobs', 'create_jobs', 'update_job_status', 'view_analytics',
+        'manage_equipment', 'view_equipment'
       ],
       technician: [
         'view_machines', 'edit_machine_reports', 'view_venues',
-        'view_inventory', 'view_jobs', 'create_jobs', 'update_job_status'
+        'view_inventory', 'view_jobs', 'create_jobs', 'update_job_status',
+        'view_equipment'
       ],
       viewer: [
-        'view_machines', 'view_venues', 'view_inventory', 'view_jobs'
+        'view_machines', 'view_venues', 'view_inventory', 'view_jobs',
+        'view_equipment'
       ]
     };
   
@@ -398,7 +401,8 @@ export const useAuth = () => {
       'email-notifications': 'manage_email_notifications',
       'dashboard': 'always',
       'map': 'view_venues',
-      'parts': 'manage_stock'
+      'parts': 'manage_stock',
+      'equipment-hire': 'view_equipment' // NEW: Equipment Hire access
     };
   
     const requiredPermission = viewPermissions[view];
@@ -407,6 +411,11 @@ export const useAuth = () => {
     // For view-reports, allow both view_financial_reports OR view_earnings permissions
     if (view === 'view-reports') {
       return hasPermission('view_financial_reports') || hasPermission('view_earnings');
+    }
+  
+    // For equipment-hire, allow both view_equipment OR manage_equipment permissions
+    if (view === 'equipment-hire') {
+      return hasPermission('view_equipment') || hasPermission('manage_equipment');
     }
   
     return requiredPermission ? hasPermission(requiredPermission) : false;

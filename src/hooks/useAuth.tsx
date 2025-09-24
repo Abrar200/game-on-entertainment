@@ -334,14 +334,17 @@ export const useAuth = () => {
         'manage_email_notifications', 'manage_equipment', 'view_equipment'
       ],
       manager: [
-        'view_users',
-        'view_earnings', 'manage_machines', 'view_machines',
-        'edit_machine_reports', 'manage_venues', 'view_venues',
-        'manage_prizes', 'view_inventory', 'manage_stock', 'manage_jobs',
-        'view_jobs', 'create_jobs', 'update_job_status', 'view_analytics',
-        'manage_equipment', 'view_equipment'
+        // UPDATED: Manager now has the same permissions as admin (full access)
+        'view_users', 'manage_users', 'delete_users',
+        'view_financial_reports', 'view_earnings', 'edit_earnings',
+        'manage_machines', 'view_machines', 'edit_machine_reports',
+        'manage_venues', 'view_venues', 'manage_prizes', 'view_inventory',
+        'manage_stock', 'manage_jobs', 'view_jobs', 'create_jobs',
+        'update_job_status', 'manage_settings', 'view_analytics',
+        'manage_email_notifications', 'manage_equipment', 'view_equipment'
       ],
       technician: [
+        // UNCHANGED: Technician keeps the same limited access
         'view_machines', 'edit_machine_reports', 'view_venues',
         'view_inventory', 'view_jobs', 'create_jobs', 'update_job_status',
         'view_equipment'
@@ -358,7 +361,8 @@ export const useAuth = () => {
 
   const canManageUsers = (): boolean => {
     if (!userProfile) return false;
-    return userProfile.role === 'super_admin' || userProfile.role === 'admin';
+    // UPDATED: Manager can now manage users like admin
+    return userProfile.role === 'super_admin' || userProfile.role === 'admin' || userProfile.role === 'manager';
   };
   
   const canViewUsers = (): boolean => {
@@ -368,7 +372,10 @@ export const useAuth = () => {
   
   const canDeleteUsers = (): boolean => {
     if (!userProfile) return false;
-    return userProfile.role === 'super_admin' || (userProfile.role === 'admin' && hasPermission('delete_users'));
+    // UPDATED: Manager can now delete users like admin
+    return userProfile.role === 'super_admin' || 
+           (userProfile.role === 'admin' && hasPermission('delete_users')) ||
+           (userProfile.role === 'manager' && hasPermission('delete_users'));
   };
   
   const canCreateUserWithRole = (targetRole: string): boolean => {
@@ -377,7 +384,7 @@ export const useAuth = () => {
     const roleHierarchy = {
       super_admin: ['super_admin', 'admin', 'manager', 'technician', 'viewer'],
       admin: ['manager', 'technician', 'viewer'],
-      manager: ['technician', 'viewer'],
+      manager: ['manager', 'technician', 'viewer'], // UPDATED: Manager can create manager, technician, viewer
       technician: [],
       viewer: []
     };

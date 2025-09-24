@@ -484,20 +484,24 @@ export const EquipmentEditDialog: React.FC<EquipmentEditDialogProps> = ({
                 </Select>
               </div>
 
+              
               <div>
                 <Label htmlFor="venue">Current Location</Label>
-                <Select value={formData.venue_id} onValueChange={(value) => setFormData({ ...formData, venue_id: value })}>
-                  <SelectTrigger>
+                <Select 
+                    value={formData.venue_id || "no-venue"} 
+                    onValueChange={(value) => setFormData({ ...formData, venue_id: value === "no-venue" ? "" : value })}
+                >
+                    <SelectTrigger>
                     <SelectValue placeholder="Select venue (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">No venue assigned</SelectItem>
+                    </SelectTrigger>
+                    <SelectContent>
+                    <SelectItem value="no-venue">No venue assigned</SelectItem>
                     {venues.map((venue) => (
-                      <SelectItem key={venue.id} value={venue.id}>
+                        <SelectItem key={venue.id} value={venue.id}>
                         {venue.name}
-                      </SelectItem>
+                        </SelectItem>
                     ))}
-                  </SelectContent>
+                    </SelectContent>
                 </Select>
               </div>
             </div>

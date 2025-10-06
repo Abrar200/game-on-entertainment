@@ -338,23 +338,27 @@ const RunEditDialog: React.FC<RunEditDialogProps> = ({ isOpen, onClose, run, onS
                 </Select>
               </div>
 
+              
               <div>
                 <Label>Assign To Staff Member (Optional)</Label>
                 <Select
-                  value={formData.assigned_to}
-                  onValueChange={(value) => setFormData({ ...formData, assigned_to: value })}
+                    value={formData.assigned_to || 'unassigned'}
+                    onValueChange={(value) => setFormData({ 
+                    ...formData, 
+                    assigned_to: value === 'unassigned' ? '' : value 
+                    })}
                 >
-                  <SelectTrigger>
+                    <SelectTrigger>
                     <SelectValue placeholder="Select a staff member" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">Unassigned</SelectItem>
+                    </SelectTrigger>
+                    <SelectContent>
+                    <SelectItem value="unassigned">Unassigned</SelectItem>
                     {users.map(user => (
-                      <SelectItem key={user.id} value={user.id}>
+                        <SelectItem key={user.id} value={user.id}>
                         {user.full_name || user.username} ({user.role})
-                      </SelectItem>
+                        </SelectItem>
                     ))}
-                  </SelectContent>
+                    </SelectContent>
                 </Select>
               </div>
 

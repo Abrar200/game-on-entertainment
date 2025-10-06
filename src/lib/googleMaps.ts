@@ -61,7 +61,5 @@ export const createVenueMarkerIcon = (number: number) => {
 
 // Get API key from environment or return placeholder
 export const getGoogleMapsApiKey = (): string => {
-  // In a real app, this would come from environment variables
-  // For now, return a placeholder that users need to replace
-  return process.env.REACT_APP_GOOGLE_MAPS_API_KEY || 'YOUR_GOOGLE_MAPS_API_KEY';
+  return 'AIzaSyA1Fn93oOxNsLhhc3DjYhcaPik8AlC2rEA';
 };

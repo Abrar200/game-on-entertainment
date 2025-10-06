@@ -1,113 +1,222 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader } from '@googlemaps/js-api-loader';
 import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { MapPin, X, AlertCircle } from 'lucide-react';
-import { GOOGLE_MAPS_CONFIG, generateMockCoordinates, createVenueMarkerIcon } from '@/lib/googleMaps';
+import { Badge } from '@/components/ui/badge';
+import { Loader } from '@googlemaps/js-api-loader';
 
 interface Venue {
   id: string;
   name: string;
   address?: string;
-  contact_person?: string;
-  phone?: string;
   latitude?: number;
   longitude?: number;
 }
 
 interface GoogleMapProps {
   venues: Venue[];
-  apiKey?: string;
+  apiKey: string;
+  showRoute?: boolean; // NEW: Show route lines between venues
 }
 
-const GoogleMap: React.FC<GoogleMapProps> = ({ venues, apiKey }) => {
+const GoogleMap: React.FC<GoogleMapProps> = ({ venues, apiKey, showRoute = false }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
-  const [markers, setMarkers] = useState<google.maps.Marker[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const markersRef = useRef<google.maps.Marker[]>([]);
+  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+  const routeLineRef = useRef<google.maps.Polyline | null>(null);
 
   useEffect(() => {
     if (!apiKey || apiKey === 'YOUR_GOOGLE_MAPS_API_KEY') {
-      setError('Please set your Google Maps API key in VenueMap.tsx');
-      setIsLoading(false);
+      setError('Google Maps API key not configured');
+      setLoading(false);
       return;
     }
 
-    const loader = new Loader({
-      apiKey,
-      version: 'weekly',
-      libraries: ['places']
-    });
+    initializeMap();
 
-    loader.load().then(() => {
-      if (mapRef.current) {
-        const googleMap = new google.maps.Map(mapRef.current, {
-          center: GOOGLE_MAPS_CONFIG.defaultCenter,
-          zoom: GOOGLE_MAPS_CONFIG.defaultZoom,
-          styles: GOOGLE_MAPS_CONFIG.mapStyles
-        });
-        
-        setMap(googleMap);
-        setIsLoading(false);
+    return () => {
+      // Cleanup
+      markersRef.current.forEach(marker => marker.setMap(null));
+      if (infoWindowRef.current) {
+        infoWindowRef.current.close();
       }
-    }).catch((error) => {
-      console.error('Error loading Google Maps:', error);
-      setError('Failed to load Google Maps. Check your API key.');
-      setIsLoading(false);
-    });
+      if (routeLineRef.current) {
+        routeLineRef.current.setMap(null);
+      }
+    };
   }, [apiKey]);
 
   useEffect(() => {
-    if (!map || venues.length === 0) return;
+    if (map && venues.length > 0) {
+      updateMarkers();
+    }
+  }, [map, venues, showRoute]);
 
-    // Clear existing markers
-    markers.forEach(marker => marker.setMap(null));
-    
-    const newMarkers: google.maps.Marker[] = [];
-    const bounds = new google.maps.LatLngBounds();
+  const initializeMap = async () => {
+    try {
+      setLoading(true);
 
-    venues.forEach((venue, index) => {
-      let lat = venue.latitude;
-      let lng = venue.longitude;
-      
-      // Generate mock coordinates if not provided
-      if (!lat || !lng) {
-        const mockCoords = generateMockCoordinates(index, venues.length);
-        lat = mockCoords.lat;
-        lng = mockCoords.lng;
+      const loader = new Loader({
+        apiKey: apiKey,
+        version: 'weekly',
+        libraries: ['places', 'geometry']
+      });
+
+      await loader.load();
+
+      if (!mapRef.current) return;
+
+      // Center on South Australia (where most venues are likely located)
+      const southAustraliaCenter = { lat: -34.9285, lng: 138.6007 }; // Adelaide, SA
+
+      const mapInstance = new google.maps.Map(mapRef.current, {
+        center: southAustraliaCenter,
+        zoom: 6,
+        mapTypeControl: true,
+        streetViewControl: false,
+        fullscreenControl: true,
+        styles: [
+          {
+            featureType: 'poi',
+            elementType: 'labels',
+            stylers: [{ visibility: 'off' }]
+          }
+        ]
+      });
+
+      setMap(mapInstance);
+      infoWindowRef.current = new google.maps.InfoWindow();
+      setLoading(false);
+
+    } catch (err: any) {
+      console.error('Error loading Google Maps:', err);
+      setError(err.message || 'Failed to load Google Maps');
+      setLoading(false);
+    }
+  };
+
+  const geocodeAddress = async (address: string): Promise<{ lat: number; lng: number } | null> => {
+    try {
+      const geocoder = new google.maps.Geocoder();
+      const result = await geocoder.geocode({ 
+        address: address + ', South Australia, Australia' 
+      });
+
+      if (result.results && result.results.length > 0) {
+        const location = result.results[0].geometry.location;
+        return { lat: location.lat(), lng: location.lng() };
       }
-      
+    } catch (error) {
+      console.error('Geocoding error:', error);
+    }
+    return null;
+  };
+
+  const updateMarkers = async () => {
+    if (!map) return;
+
+    // Clear existing markers and route
+    markersRef.current.forEach(marker => marker.setMap(null));
+    markersRef.current = [];
+    
+    if (routeLineRef.current) {
+      routeLineRef.current.setMap(null);
+    }
+
+    const bounds = new google.maps.LatLngBounds();
+    const routeCoordinates: google.maps.LatLng[] = [];
+
+    // Create markers for each venue
+    for (let i = 0; i < venues.length; i++) {
+      const venue = venues[i];
+      let position: { lat: number; lng: number } | null = null;
+
+      // Try to get coordinates
+      if (venue.latitude && venue.longitude) {
+        position = { lat: venue.latitude, lng: venue.longitude };
+      } else if (venue.address) {
+        position = await geocodeAddress(venue.address);
+      }
+
+      if (!position) {
+        console.warn(`Could not get coordinates for venue: ${venue.name}`);
+        continue;
+      }
+
+      const latLng = new google.maps.LatLng(position.lat, position.lng);
+      routeCoordinates.push(latLng);
+
+      // Create custom marker icon with number
       const marker = new google.maps.Marker({
-        position: { lat, lng },
-        map,
+        position: position,
+        map: map,
         title: venue.name,
-        icon: createVenueMarkerIcon(index + 1)
+        label: {
+          text: (i + 1).toString(),
+          color: 'white',
+          fontSize: '14px',
+          fontWeight: 'bold'
+        },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 20,
+          fillColor: '#dc2626',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 3
+        }
       });
 
       marker.addListener('click', () => {
         setSelectedVenue(venue);
-        map.panTo({ lat, lng });
+        if (infoWindowRef.current) {
+          const content = `
+            <div style="padding: 8px;">
+              <h3 style="margin: 0 0 8px 0; font-weight: bold;">${venue.name}</h3>
+              ${venue.address ? `<p style="margin: 0; font-size: 14px;">${venue.address}</p>` : ''}
+              <p style="margin: 4px 0 0 0; font-size: 12px; color: #666;">Stop ${i + 1} of ${venues.length}</p>
+            </div>
+          `;
+          infoWindowRef.current.setContent(content);
+          infoWindowRef.current.open(map, marker);
+        }
       });
 
-      newMarkers.push(marker);
-      bounds.extend({ lat, lng });
-    });
-
-    setMarkers(newMarkers);
-    
-    if (venues.length > 1) {
-      map.fitBounds(bounds);
+      markersRef.current.push(marker);
+      bounds.extend(latLng);
     }
-  }, [map, venues]);
 
-  if (isLoading) {
+    // Draw route line if enabled
+    if (showRoute && routeCoordinates.length > 1) {
+      routeLineRef.current = new google.maps.Polyline({
+        path: routeCoordinates,
+        geodesic: true,
+        strokeColor: '#2563eb',
+        strokeOpacity: 0.8,
+        strokeWeight: 4,
+        map: map
+      });
+    }
+
+    // Fit map to show all markers
+    if (routeCoordinates.length > 0) {
+      map.fitBounds(bounds);
+      
+      // Adjust zoom if only one marker
+      if (routeCoordinates.length === 1) {
+        map.setZoom(12);
+      }
+    }
+  };
+
+  if (loading) {
     return (
-      <div className="w-full h-[600px] bg-gray-100 rounded-lg flex items-center justify-center">
+      <div className="w-full h-[600px] flex items-center justify-center bg-gray-100 rounded">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading Google Maps...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading map...</p>
         </div>
       </div>
     );
@@ -115,72 +224,37 @@ const GoogleMap: React.FC<GoogleMapProps> = ({ venues, apiKey }) => {
 
   if (error) {
     return (
-      <div className="w-full h-[600px] bg-gray-100 rounded-lg flex items-center justify-center">
-        <div className="text-center text-red-600 max-w-md">
-          <AlertCircle className="h-12 w-12 mx-auto mb-4" />
-          <p className="font-semibold mb-2">Google Maps Error</p>
-          <p className="text-sm mb-4">{error}</p>
-          <div className="text-xs text-gray-600 bg-gray-50 p-3 rounded">
-            <p className="font-medium mb-1">To fix this:</p>
-            <p>1. Get a Google Maps API key from Google Cloud Console</p>
-            <p>2. Replace 'YOUR_GOOGLE_MAPS_API_KEY' in VenueMap.tsx</p>
-            <p>3. Enable Maps JavaScript API in your Google Cloud project</p>
-          </div>
+      <div className="w-full h-[600px] flex items-center justify-center bg-red-50 rounded border border-red-200">
+        <div className="text-center p-8">
+          <p className="text-red-600 font-semibold mb-2">Map Error</p>
+          <p className="text-red-500 text-sm">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="relative w-full h-[600px] rounded-lg overflow-hidden">
-      <div ref={mapRef} className="w-full h-full" />
+    <div className="relative w-full">
+      <div ref={mapRef} className="w-full h-[600px] rounded" />
       
-      {selectedVenue && (
-        <Card className="absolute bottom-4 left-4 max-w-sm z-10 shadow-lg border-2 border-red-200">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <h3 className="font-bold text-lg text-red-700 mb-2">{selectedVenue.name}</h3>
-                {selectedVenue.address && (
-                  <p className="text-sm text-gray-700 mb-2 flex items-start gap-2">
-                    <MapPin className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
-                    <span>{selectedVenue.address}</span>
-                  </p>
-                )}
-                {selectedVenue.contact_person && (
-                  <p className="text-sm text-gray-700 mb-1">
-                    <span className="font-semibold text-red-600">Contact:</span> {selectedVenue.contact_person}
-                  </p>
-                )}
-                {selectedVenue.phone && (
-                  <p className="text-sm text-gray-700">
-                    <span className="font-semibold text-red-600">Phone:</span> {selectedVenue.phone}
-                  </p>
-                )}
-              </div>
-              <Button 
-                size="sm" 
-                variant="ghost" 
-                onClick={() => setSelectedVenue(null)}
-                className="ml-2 h-8 w-8 p-0 hover:bg-red-100"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-      
-      <div className="absolute top-4 right-4 bg-white/95 backdrop-blur-sm rounded-lg p-3 text-sm shadow-lg border border-red-200">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-5 h-5 bg-red-600 rounded-full flex items-center justify-center shadow-sm">
-            <span className="text-white text-xs font-bold">1</span>
+      {/* Legend */}
+      <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-sm rounded-lg shadow-lg p-3 text-sm">
+        <div className="font-semibold mb-2">Map Legend</div>
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 bg-red-600 rounded-full border-2 border-white"></div>
+            <span>Venue Location</span>
           </div>
-          <span className="font-semibold text-red-700">Venue Location</span>
+          {showRoute && (
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-1 bg-blue-600"></div>
+              <span>Route Path</span>
+            </div>
+          )}
         </div>
-        <p className="text-xs text-gray-600">
-          <span className="font-medium">{venues.length}</span> venue{venues.length !== 1 ? 's' : ''} displayed
-        </p>
+        <div className="mt-2 pt-2 border-t text-xs text-gray-600">
+          {venues.length} venue{venues.length !== 1 ? 's' : ''} displayed
+        </div>
       </div>
     </div>
   );

@@ -22,6 +22,8 @@ import VenueMap from './VenueMap';
 import EmailNotificationManager from './EmailNotificationManager';
 import ViewReportsPage from './ViewReportsPage';
 import EquipmentHireManager from './EquipmentHireManager'; // Add this import
+import RunsManager from './RunsManager';
+
 
 interface AppLayoutProps {
   children?: React.ReactNode;
@@ -230,6 +232,18 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           );
         }
         return <EquipmentHireManager />;
+
+      case 'runs':
+        if (!canAccessView('runs')) {
+          return (
+            <AccessDenied 
+              viewName="Runs" 
+              userRole={userProfile.role}
+              onBackToDashboard={() => setCurrentView('dashboard')}
+            />
+          );
+        }
+        return <RunsManager userRole={userProfile.role} hasPermission={hasPermission} />;
         
       case 'download':
         if (!hasPermission('manage_settings')) {

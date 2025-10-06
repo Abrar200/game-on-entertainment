@@ -32,7 +32,7 @@ export const getImageUrl = (imageUrl: string | null | undefined): string => {
     return finalUrl;
 };
 
-export const getPlaceholderImage = (type: 'machine' | 'venue' | 'prize' = 'machine'): string => {
+export const getPlaceholderImage = (type: 'machine' | 'venue' | 'prize' | 'run' = 'machine'): string => {
     // Return a data URL for a simple placeholder
     return `data:image/svg+xml;base64,${btoa(`
     <svg width="300" height="200" xmlns="http://www.w3.org/2000/svg">
@@ -47,7 +47,7 @@ export const getPlaceholderImage = (type: 'machine' | 'venue' | 'prize' = 'machi
 export const createImageWithFallback = (
     imageUrl: string | null | undefined,
     alt: string,
-    type: 'machine' | 'venue' | 'prize' = 'machine'
+    type: 'machine' | 'venue' | 'prize' | 'run' = 'machine'
 ): { src: string; onError: (e: React.SyntheticEvent<HTMLImageElement>) => void } => {
     const src = getImageUrl(imageUrl) || getPlaceholderImage(type);
 

@@ -8,6 +8,8 @@ import {
   Home, BarChart3, History, LogOut, Upload, Map, Mail, Shield,
   Crown, Eye, User, Loader2, Cog, Truck // Added Truck for equipment hire icon
 } from 'lucide-react';
+import { Route } from 'lucide-react';
+
 
 interface HeaderProps {
   onLogout: () => void;
@@ -188,6 +190,7 @@ const Header: React.FC<HeaderProps> = ({
             )}
             
             {/* Management Dropdown */}
+            
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button 
@@ -214,6 +217,12 @@ const Header: React.FC<HeaderProps> = ({
                     Venues
                   </DropdownMenuItem>
                 )}
+                {canAccessView('runs') && (
+                  <DropdownMenuItem onClick={createNavHandler('runs', 'Runs')}>
+                    <Route className="h-4 w-4 mr-2" />
+                    Runs
+                  </DropdownMenuItem>
+                )}
                 {canAccessView('prizes') && (
                   <DropdownMenuItem onClick={createNavHandler('prizes', 'Prizes')}>
                     <Gift className="h-4 w-4 mr-2" />
@@ -226,7 +235,6 @@ const Header: React.FC<HeaderProps> = ({
                     Parts
                   </DropdownMenuItem>
                 )}
-                {/* View Reports - Only for Admins and Super Admins */}
                 {(hasPermission('view_financial_reports') || hasPermission('view_earnings')) && (
                   <DropdownMenuItem onClick={createNavHandler('view-reports', 'View Reports')}>
                     <FileText className="h-4 w-4 mr-2" />

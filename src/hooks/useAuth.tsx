@@ -334,7 +334,7 @@ export const useAuth = () => {
         'manage_email_notifications', 'manage_equipment', 'view_equipment'
       ],
       manager: [
-        // UPDATED: Manager now has the same permissions as admin (full access)
+        // Manager now has the same permissions as admin (full access)
         'view_users', 'manage_users', 'delete_users',
         'view_financial_reports', 'view_earnings', 'edit_earnings',
         'manage_machines', 'view_machines', 'edit_machine_reports',
@@ -344,7 +344,6 @@ export const useAuth = () => {
         'manage_email_notifications', 'manage_equipment', 'view_equipment'
       ],
       technician: [
-        // UNCHANGED: Technician keeps the same limited access
         'view_machines', 'edit_machine_reports', 'view_venues',
         'view_inventory', 'view_jobs', 'create_jobs', 'update_job_status',
         'view_equipment'
@@ -361,7 +360,6 @@ export const useAuth = () => {
 
   const canManageUsers = (): boolean => {
     if (!userProfile) return false;
-    // UPDATED: Manager can now manage users like admin
     return userProfile.role === 'super_admin' || userProfile.role === 'admin' || userProfile.role === 'manager';
   };
   
@@ -372,7 +370,6 @@ export const useAuth = () => {
   
   const canDeleteUsers = (): boolean => {
     if (!userProfile) return false;
-    // UPDATED: Manager can now delete users like admin
     return userProfile.role === 'super_admin' || 
            (userProfile.role === 'admin' && hasPermission('delete_users')) ||
            (userProfile.role === 'manager' && hasPermission('delete_users'));
@@ -384,7 +381,7 @@ export const useAuth = () => {
     const roleHierarchy = {
       super_admin: ['super_admin', 'admin', 'manager', 'technician', 'viewer'],
       admin: ['manager', 'technician', 'viewer'],
-      manager: ['manager', 'technician', 'viewer'], // UPDATED: Manager can create manager, technician, viewer
+      manager: ['manager', 'technician', 'viewer'],
       technician: [],
       viewer: []
     };
@@ -399,7 +396,7 @@ export const useAuth = () => {
     const viewPermissions = {
       'users': 'view_users',
       'reports': 'view_financial_reports',
-      'view-reports': 'view_financial_reports', // NEW: View Reports access
+      'view-reports': 'view_financial_reports',
       'machines': 'view_machines',
       'venues': 'view_venues',
       'prizes': 'view_inventory',
@@ -409,7 +406,8 @@ export const useAuth = () => {
       'dashboard': 'always',
       'map': 'view_venues',
       'parts': 'manage_stock',
-      'equipment-hire': 'view_equipment' // NEW: Equipment Hire access
+      'equipment-hire': 'view_equipment',
+      'runs': 'view_venues' // NEW: Runs accessible to anyone who can view venues
     };
   
     const requiredPermission = viewPermissions[view];

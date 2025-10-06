@@ -3,7 +3,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { X, MapPin, Calendar, Wrench, DollarSign, FileText, Gift, TrendingUp, Loader2, History } from 'lucide-react';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { 
+  X, MapPin, Calendar, DollarSign, FileText, Gift, TrendingUp, Loader2, 
+  History, Wrench, Save, X as XIcon, Info, AlertTriangle, Package 
+} from 'lucide-react';
 import { MachineBarcodeDisplay } from './MachineBarcodeDisplay';
 import { MachineEditDialog } from './MachineEditDialog';
 import { ServiceScheduleDialog } from './ServiceScheduleDialog';
@@ -35,6 +40,7 @@ interface Machine {
 interface MachineProfileProps {
   machine: Machine;
   onClose: () => void;
+  userProfile?: any;
 }
 
 interface MachineStats {
@@ -47,7 +53,7 @@ interface MachineStats {
   loading: boolean;
 }
 
-export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose }) => {
+export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose, userProfile }) => {
   const { toast } = useToast();
   const [showReports, setShowReports] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -55,6 +61,15 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
   const [showCreateReport, setShowCreateReport] = useState(false);
   const [showAddPrizes, setShowAddPrizes] = useState(false);
   const [showMaintenanceHistory, setShowMaintenanceHistory] = useState(false);
+  const [serviceInfo, setServiceInfo] = useState<any>(null);
+  const [isEditingServiceInfo, setIsEditingServiceInfo] = useState(false);
+  const [serviceInfoForm, setServiceInfoForm] = useState({
+    service_instructions: '',
+    maintenance_schedule: '',
+    common_issues: '',
+    parts_needed: '',
+    safety_notes: ''
+  });
   const [machineStats, setMachineStats] = useState<MachineStats>({
     totalEarnings: 0,
     totalReports: 0,
@@ -67,12 +82,87 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
 
   useEffect(() => {
     fetchMachineStats();
+    fetchServiceInfo();
   }, [machine.id]);
+
+  const canEditServiceInfo = () => {
+    return userProfile && ['super_admin', 'admin', 'manager'].includes(userProfile.role);
+  };
+
+  const fetchServiceInfo = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('machine_service_info')
+        .select('*')
+        .eq('machine_id', machine.id)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error fetching service info:', error);
+        return;
+      }
+
+      if (data) {
+        setServiceInfo(data);
+        setServiceInfoForm({
+          service_instructions: data.service_instructions || '',
+          maintenance_schedule: data.maintenance_schedule || '',
+          common_issues: data.common_issues || '',
+          parts_needed: data.parts_needed || '',
+          safety_notes: data.safety_notes || ''
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching service info:', error);
+    }
+  };
+
+  const handleSaveServiceInfo = async () => {
+    try {
+      const serviceData = {
+        machine_id: machine.id,
+        ...serviceInfoForm,
+        updated_at: new Date().toISOString()
+      };
+
+      if (serviceInfo?.id) {
+        // Update existing
+        const { error } = await supabase
+          .from('machine_service_info')
+          .update(serviceData)
+          .eq('id', serviceInfo.id);
+
+        if (error) throw error;
+      } else {
+        // Create new
+        const { error } = await supabase
+          .from('machine_service_info')
+          .insert([serviceData]);
+
+        if (error) throw error;
+      }
+
+      toast({
+        title: 'Success',
+        description: 'Service information saved successfully'
+      });
+
+      setIsEditingServiceInfo(false);
+      await fetchServiceInfo();
+    } catch (error) {
+      console.error('Error saving service info:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to save service information',
+        variant: 'destructive'
+      });
+    }
+  };
 
   const fetchMachineStats = async () => {
     try {
       setMachineStats(prev => ({ ...prev, loading: true }));
-      console.log('📊 Fetching stats for machine:', machine.name);
+      console.log('Fetching stats for machine:', machine.name);
 
       // Fetch machine reports
       const { data: reports, error: reportsError } = await supabase
@@ -82,7 +172,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
         .order('created_at', { ascending: false });
 
       if (reportsError) {
-        console.error('❌ Error fetching reports:', reportsError);
+        console.error('Error fetching reports:', reportsError);
         throw reportsError;
       }
 
@@ -96,7 +186,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
         .limit(1);
 
       if (jobsError) {
-        console.warn('⚠️ Error fetching jobs (may not exist):', jobsError);
+        console.warn('Error fetching jobs (may not exist):', jobsError);
       }
 
       // Calculate statistics
@@ -133,14 +223,14 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
         loading: false
       });
 
-      console.log('✅ Machine stats calculated:', {
+      console.log('Machine stats calculated:', {
         totalEarnings,
         totalReports: reports?.length || 0,
         averagePayout: averagePayout?.toFixed(2) + '%'
       });
 
     } catch (error) {
-      console.error('❌ Error fetching machine stats:', error);
+      console.error('Error fetching machine stats:', error);
       toast({
         title: 'Error',
         description: 'Failed to load machine statistics',
@@ -200,7 +290,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
           <div className="bg-gradient-to-r from-red-600 via-red-500 to-red-700 text-white p-6 rounded-t-lg">
             <div className="flex justify-between items-start">
               <div className="flex-1">
-                <h1 className="text-3xl font-bold mb-2">🎮 {machine.name}</h1>
+                <h1 className="text-3xl font-bold mb-2">{machine.name}</h1>
                 <p className="text-red-100 text-lg">{machine.type}</p>
                 <div className="flex items-center gap-4 mt-2">
                   <Badge className={`${getStatusColor(machine.status)} text-sm`}>
@@ -399,6 +489,211 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
               </div>
             </div>
 
+            {/* Service Information Section - NEW */}
+            <Card>
+              <CardHeader>
+                <div className="flex justify-between items-center">
+                  <CardTitle className="flex items-center gap-2">
+                    <Info className="h-5 w-5 text-purple-600" />
+                    Service Information
+                  </CardTitle>
+                  {canEditServiceInfo() && !isEditingServiceInfo && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditingServiceInfo(true)}
+                    >
+                      <Wrench className="h-4 w-4 mr-2" />
+                      Edit
+                    </Button>
+                  )}
+                  {isEditingServiceInfo && (
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setIsEditingServiceInfo(false);
+                          setServiceInfoForm({
+                            service_instructions: serviceInfo?.service_instructions || '',
+                            maintenance_schedule: serviceInfo?.maintenance_schedule || '',
+                            common_issues: serviceInfo?.common_issues || '',
+                            parts_needed: serviceInfo?.parts_needed || '',
+                            safety_notes: serviceInfo?.safety_notes || ''
+                          });
+                        }}
+                      >
+                        <XIcon className="h-4 w-4 mr-2" />
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleSaveServiceInfo}
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        <Save className="h-4 w-4 mr-2" />
+                        Save
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {!canEditServiceInfo() && !serviceInfo && (
+                  <p className="text-gray-500 text-sm italic">
+                    No service information available for this machine
+                  </p>
+                )}
+
+                {isEditingServiceInfo ? (
+                  <div className="space-y-4">
+                    <div>
+                      <Label htmlFor="service_instructions">Service Instructions</Label>
+                      <Textarea
+                        id="service_instructions"
+                        value={serviceInfoForm.service_instructions}
+                        onChange={(e) => setServiceInfoForm({
+                          ...serviceInfoForm,
+                          service_instructions: e.target.value
+                        })}
+                        placeholder="Step-by-step service instructions..."
+                        rows={4}
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="maintenance_schedule">Maintenance Schedule</Label>
+                      <Textarea
+                        id="maintenance_schedule"
+                        value={serviceInfoForm.maintenance_schedule}
+                        onChange={(e) => setServiceInfoForm({
+                          ...serviceInfoForm,
+                          maintenance_schedule: e.target.value
+                        })}
+                        placeholder="Regular maintenance tasks and schedule..."
+                        rows={3}
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="common_issues">Common Issues</Label>
+                      <Textarea
+                        id="common_issues"
+                        value={serviceInfoForm.common_issues}
+                        onChange={(e) => setServiceInfoForm({
+                          ...serviceInfoForm,
+                          common_issues: e.target.value
+                        })}
+                        placeholder="Common problems and troubleshooting..."
+                        rows={3}
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="parts_needed">Parts Needed</Label>
+                      <Textarea
+                        id="parts_needed"
+                        value={serviceInfoForm.parts_needed}
+                        onChange={(e) => setServiceInfoForm({
+                          ...serviceInfoForm,
+                          parts_needed: e.target.value
+                        })}
+                        placeholder="Parts typically needed for service..."
+                        rows={2}
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="safety_notes">Safety Notes</Label>
+                      <Textarea
+                        id="safety_notes"
+                        value={serviceInfoForm.safety_notes}
+                        onChange={(e) => setServiceInfoForm({
+                          ...serviceInfoForm,
+                          safety_notes: e.target.value
+                        })}
+                        placeholder="Important safety information..."
+                        rows={2}
+                        className="border-red-300 focus:border-red-500"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {serviceInfo?.service_instructions && (
+                      <div>
+                        <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                          <Wrench className="h-4 w-4 text-blue-600" />
+                          Service Instructions
+                        </h4>
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                          {serviceInfo.service_instructions}
+                        </p>
+                      </div>
+                    )}
+
+                    {serviceInfo?.maintenance_schedule && (
+                      <div>
+                        <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                          <Calendar className="h-4 w-4 text-green-600" />
+                          Maintenance Schedule
+                        </h4>
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                          {serviceInfo.maintenance_schedule}
+                        </p>
+                      </div>
+                    )}
+
+                    {serviceInfo?.common_issues && (
+                      <div>
+                        <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4 text-orange-600" />
+                          Common Issues
+                        </h4>
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                          {serviceInfo.common_issues}
+                        </p>
+                      </div>
+                    )}
+
+                    {serviceInfo?.parts_needed && (
+                      <div>
+                        <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
+                          <Package className="h-4 w-4 text-purple-600" />
+                          Parts Needed
+                        </h4>
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                          {serviceInfo.parts_needed}
+                        </p>
+                      </div>
+                    )}
+
+                    {serviceInfo?.safety_notes && (
+                      <div className="bg-red-50 border border-red-200 rounded p-3">
+                        <h4 className="font-semibold text-sm mb-2 flex items-center gap-2 text-red-800">
+                          <AlertTriangle className="h-4 w-4" />
+                          Safety Notes
+                        </h4>
+                        <p className="text-sm text-red-700 whitespace-pre-wrap">
+                          {serviceInfo.safety_notes}
+                        </p>
+                      </div>
+                    )}
+
+                    {!serviceInfo?.service_instructions && 
+                     !serviceInfo?.maintenance_schedule && 
+                     !serviceInfo?.common_issues && 
+                     !serviceInfo?.parts_needed && 
+                     !serviceInfo?.safety_notes && (
+                      <p className="text-gray-500 text-sm italic">
+                        No service information available for this machine
+                      </p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {/* Action Buttons */}
             <div className="grid grid-cols-2 md:grid-cols-6 gap-4 pt-4 border-t">
               <Button
@@ -419,13 +714,13 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                 className="bg-red-600 hover:bg-red-700"
                 onClick={handleViewReports}
               >
-                📊 View Reports
+                View Reports
               </Button>
               <Button
                 variant="outline"
                 onClick={handleScheduleService}
               >
-                🔧 Schedule Service
+                Schedule Service
               </Button>
               <Button
                 className="bg-blue-600 hover:bg-blue-700 text-white"
@@ -438,7 +733,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                 variant="outline"
                 onClick={handleEditDetails}
               >
-                📝 Edit Details
+                Edit Details
               </Button>
             </div>
           </div>

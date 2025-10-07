@@ -40,6 +40,80 @@ interface RunEditDialogProps {
   onSave: () => void;
 }
 
+// Helper function to generate schedules based on frequency
+const generateSchedules = async (runId: string, frequency: string, startDate: Date = new Date()) => {
+  try {
+    console.log('🗓️ Generating schedules for run:', runId, 'Frequency:', frequency);
+
+    // First, delete existing schedules for this run
+    const { error: deleteError } = await supabase
+      .from('run_schedules')
+      .delete()
+      .eq('run_id', runId);
+
+    if (deleteError) {
+      console.error('Error deleting old schedules:', deleteError);
+    }
+
+    const schedules = [];
+    const today = new Date(startDate);
+    today.setHours(0, 0, 0, 0); // Reset to start of day
+
+    // Determine how many schedules to generate and interval
+    let numberOfSchedules = 0;
+    let dayInterval = 0;
+
+    switch (frequency) {
+      case 'weekly':
+        numberOfSchedules = 12; // 3 months worth of weekly schedules
+        dayInterval = 7;
+        break;
+      case 'biweekly':
+        numberOfSchedules = 6; // 3 months worth of biweekly schedules
+        dayInterval = 14;
+        break;
+      case 'monthly':
+        numberOfSchedules = 3; // 3 months worth of monthly schedules
+        dayInterval = 30; // Approximate
+        break;
+      default:
+        console.log('Custom or invalid frequency, skipping schedule generation');
+        return;
+    }
+
+    // Generate schedule entries
+    for (let i = 0; i < numberOfSchedules; i++) {
+      const scheduleDate = new Date(today);
+      scheduleDate.setDate(today.getDate() + (i * dayInterval));
+
+      schedules.push({
+        run_id: runId,
+        scheduled_date: scheduleDate.toISOString().split('T')[0],
+        completed: false,
+        run_number: i + 1,
+        notes: null
+      });
+    }
+
+    if (schedules.length > 0) {
+      console.log(`📅 Creating ${schedules.length} schedule entries`);
+      const { error } = await supabase
+        .from('run_schedules')
+        .insert(schedules);
+
+      if (error) {
+        console.error('❌ Error creating schedules:', error);
+        throw error;
+      }
+
+      console.log('✅ Schedules created successfully');
+    }
+  } catch (error) {
+    console.error('❌ Error in generateSchedules:', error);
+    throw error;
+  }
+};
+
 const RunEditDialog: React.FC<RunEditDialogProps> = ({ isOpen, onClose, run, onSave }) => {
   const { toast } = useToast();
   const { venues, machines } = useAppContext();
@@ -158,6 +232,8 @@ const RunEditDialog: React.FC<RunEditDialogProps> = ({ isOpen, onClose, run, onS
           .eq('id', run.id);
 
         if (error) throw error;
+
+        console.log('✅ Run updated:', run.id);
       } else {
         // Create new run
         const { data, error } = await supabase
@@ -168,6 +244,8 @@ const RunEditDialog: React.FC<RunEditDialogProps> = ({ isOpen, onClose, run, onS
 
         if (error) throw error;
         runId = data.id;
+
+        console.log('✅ Run created:', runId);
       }
 
       // Save venues
@@ -193,12 +271,28 @@ const RunEditDialog: React.FC<RunEditDialogProps> = ({ isOpen, onClose, run, onS
             .insert(venuesToInsert);
 
           if (venuesError) throw venuesError;
+
+          console.log('✅ Run venues saved:', venuesToInsert.length);
+        }
+
+        // Generate schedules based on frequency
+        try {
+          await generateSchedules(runId, formData.frequency);
+          console.log('✅ Schedules generated for run');
+        } catch (scheduleError) {
+          console.error('⚠️ Error generating schedules:', scheduleError);
+          // Don't fail the entire operation if schedule generation fails
+          toast({
+            title: 'Warning',
+            description: 'Run saved but schedules could not be generated',
+            variant: 'destructive'
+          });
         }
       }
 
       toast({
         title: 'Success',
-        description: `Run ${run ? 'updated' : 'created'} successfully`
+        description: `Run ${run ? 'updated' : 'created'} successfully${!run ? ' with schedules' : ''}`
       });
 
       onSave();
@@ -336,29 +430,31 @@ const RunEditDialog: React.FC<RunEditDialogProps> = ({ isOpen, onClose, run, onS
                     <SelectItem value="custom">Custom Schedule</SelectItem>
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Schedules will be automatically generated for the next 3 months
+                </p>
               </div>
 
-              
               <div>
                 <Label>Assign To Staff Member (Optional)</Label>
                 <Select
-                    value={formData.assigned_to || 'unassigned'}
-                    onValueChange={(value) => setFormData({ 
+                  value={formData.assigned_to || 'unassigned'}
+                  onValueChange={(value) => setFormData({ 
                     ...formData, 
                     assigned_to: value === 'unassigned' ? '' : value 
-                    })}
+                  })}
                 >
-                    <SelectTrigger>
+                  <SelectTrigger>
                     <SelectValue placeholder="Select a staff member" />
-                    </SelectTrigger>
-                    <SelectContent>
+                  </SelectTrigger>
+                  <SelectContent>
                     <SelectItem value="unassigned">Unassigned</SelectItem>
                     {users.map(user => (
-                        <SelectItem key={user.id} value={user.id}>
+                      <SelectItem key={user.id} value={user.id}>
                         {user.full_name || user.username} ({user.role})
-                        </SelectItem>
+                      </SelectItem>
                     ))}
-                    </SelectContent>
+                  </SelectContent>
                 </Select>
               </div>
 

@@ -3,9 +3,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { useAppContext } from '@/contexts/AppContext';
 import ImageUpload from '@/components/ImageUpload';
+import AddressAutocomplete from '@/components/AddressAutocomplete';
 
 interface VenueEditDialogProps {
   isOpen: boolean;
@@ -21,7 +21,9 @@ const VenueEditDialog: React.FC<VenueEditDialogProps> = ({ isOpen, onClose, venu
     contact_person: '',
     phone: '',
     commission_percentage: 30,
-    image_url: ''
+    image_url: '',
+    latitude: null as number | null,
+    longitude: null as number | null
   });
 
   const venue = venues.find(v => v.id === venueId);
@@ -34,10 +36,21 @@ const VenueEditDialog: React.FC<VenueEditDialogProps> = ({ isOpen, onClose, venu
         contact_person: venue.contact_person || '',
         phone: venue.phone || '',
         commission_percentage: venue.commission_percentage || 30,
-        image_url: venue.image_url || ''
+        image_url: venue.image_url || '',
+        latitude: venue.latitude || null,
+        longitude: venue.longitude || null
       });
     }
   }, [venue]);
+
+  const handleAddressChange = (address: string, placeDetails?: google.maps.places.PlaceResult) => {
+    setFormData({
+      ...formData,
+      address,
+      latitude: placeDetails?.geometry?.location?.lat() || formData.latitude,
+      longitude: placeDetails?.geometry?.location?.lng() || formData.longitude
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,11 +80,15 @@ const VenueEditDialog: React.FC<VenueEditDialogProps> = ({ isOpen, onClose, venu
           </div>
           <div>
             <Label htmlFor="address">Address</Label>
-            <Textarea
+            <AddressAutocomplete
               id="address"
               value={formData.address}
-              onChange={(e) => setFormData({...formData, address: e.target.value})}
+              onChange={handleAddressChange}
+              placeholder="Start typing an address..."
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Start typing and select from the dropdown for accurate location
+            </p>
           </div>
           <div>
             <Label htmlFor="contact">Contact Person</Label>

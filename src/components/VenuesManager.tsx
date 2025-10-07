@@ -3,15 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus, MapPin, Trash2, Edit } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import ImageUpload from '@/components/ImageUpload';
 import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import VenueEditDialog from '@/components/VenueEditDialog';
+import AddressAutocomplete from '@/components/AddressAutocomplete';
 import { createImageWithFallback } from '@/lib/imageUtils';
-
 
 interface VenuesManagerProps {
   readOnly?: boolean;
@@ -31,8 +30,19 @@ const VenuesManager: React.FC<VenuesManagerProps> = ({ readOnly = false }) => {
     contact_person: '',
     phone: '',
     commission_percentage: 30,
-    image_url: ''
+    image_url: '',
+    latitude: null as number | null,
+    longitude: null as number | null
   });
+
+  const handleAddressChange = (address: string, placeDetails?: google.maps.places.PlaceResult) => {
+    setFormData({
+      ...formData,
+      address,
+      latitude: placeDetails?.geometry?.location?.lat() || null,
+      longitude: placeDetails?.geometry?.location?.lng() || null
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,7 +54,9 @@ const VenuesManager: React.FC<VenuesManagerProps> = ({ readOnly = false }) => {
         contact_person: '',
         phone: '',
         commission_percentage: 30,
-        image_url: ''
+        image_url: '',
+        latitude: null,
+        longitude: null
       });
       setIsDialogOpen(false);
     } catch (error) {
@@ -64,7 +76,6 @@ const VenuesManager: React.FC<VenuesManagerProps> = ({ readOnly = false }) => {
     setSelectedVenue(venueId);
     setIsEditDialogOpen(true);
   };
-
 
   return (
     <div className="space-y-6">
@@ -96,11 +107,15 @@ const VenuesManager: React.FC<VenuesManagerProps> = ({ readOnly = false }) => {
               </div>
               <div>
                 <Label htmlFor="address">Address</Label>
-                <Textarea
+                <AddressAutocomplete
                   id="address"
                   value={formData.address}
-                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                  onChange={handleAddressChange}
+                  placeholder="Start typing an address..."
                 />
+                <p className="text-xs text-gray-500 mt-1">
+                  Start typing and select from the dropdown for accurate location
+                </p>
               </div>
               <div>
                 <Label htmlFor="contact">Contact Person</Label>

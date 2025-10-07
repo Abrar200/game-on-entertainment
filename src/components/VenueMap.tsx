@@ -2,8 +2,7 @@ import React from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import GoogleMap from './GoogleMap';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { MapPin, Building2, Key } from 'lucide-react';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { MapPin, Building2 } from 'lucide-react';
 
 interface VenueMapProps {
   onClose?: () => void;
@@ -12,8 +11,8 @@ interface VenueMapProps {
 const VenueMap: React.FC<VenueMapProps> = ({ onClose }) => {
   const { venues } = useAppContext();
   
-  // Replace this with your actual Google Maps API key
-  const GOOGLE_MAPS_API_KEY = 'YOUR_GOOGLE_MAPS_API_KEY';
+  // Use your actual API key
+  const GOOGLE_MAPS_API_KEY = 'AIzaSyA1Fn93oOxNsLhhc3DjYhcaPik8AlC2rEA';
   
   if (!venues || venues.length === 0) {
     return (
@@ -39,18 +38,6 @@ const VenueMap: React.FC<VenueMapProps> = ({ onClose }) => {
 
   return (
     <div className="w-full space-y-4">
-      {GOOGLE_MAPS_API_KEY === 'YOUR_GOOGLE_MAPS_API_KEY' && (
-        <Alert className="border-amber-200 bg-amber-50">
-          <Key className="h-4 w-4 text-amber-600" />
-          <AlertDescription className="text-amber-800">
-            <strong>Google Maps API Key Required:</strong> To display the interactive map, please:
-            <br />1. Get an API key from Google Cloud Console
-            <br />2. Replace 'YOUR_GOOGLE_MAPS_API_KEY' in VenueMap.tsx
-            <br />3. Enable the Maps JavaScript API in your project
-          </AlertDescription>
-        </Alert>
-      )}
-      
       <Card className="w-full">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

@@ -11,6 +11,8 @@ interface Venue {
   phone?: string;
   image_url?: string;
   commission_percentage: number;
+  latitude?: number | null;  // ADD THIS LINE
+  longitude?: number | null; // ADD THIS LINE
 }
 
 interface PayWaveTerminal {

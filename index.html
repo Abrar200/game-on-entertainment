@@ -8,8 +8,19 @@
     <meta name="author" content="Game On Entertainment" />
     <link rel="icon" type="image/png" href="/images/favicon.png" />
     
-    <!-- Content Security Policy to allow image uploads -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob: https://*.supabase.co; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self';" />
+    <!-- Content Security Policy updated to allow Google Maps -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self'; 
+      img-src 'self' data: blob: https://*.supabase.co https://*.googleapis.com https://*.gstatic.com; 
+      script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.googleapis.com https://*.gstatic.com; 
+      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; 
+      connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.googleapis.com; 
+      font-src 'self' data: https://fonts.gstatic.com; 
+      object-src 'none'; 
+      base-uri 'self'; 
+      form-action 'self';
+      frame-src https://*.google.com;
+    " />
 
     <meta property="og:title" content="Game On Entertainment" />
     <meta property="og:description" content="Manage and track profit shares from arcade games and claw machines with ease." />

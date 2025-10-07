@@ -1,8 +1,10 @@
+import { Loader } from '@googlemaps/js-api-loader';
+
 // Google Maps configuration and utilities
 
 export const GOOGLE_MAPS_CONFIG = {
-  // Default center for UK
-  defaultCenter: { lat: 54.5, lng: -4.0 },
+  // Default center for South Australia
+  defaultCenter: { lat: -34.9285, lng: 138.6007 }, // Adelaide, SA
   defaultZoom: 6,
   
   // Map styles to make venues stand out
@@ -25,22 +27,58 @@ export const GOOGLE_MAPS_CONFIG = {
   ]
 };
 
+// Singleton loader instance
+let loaderInstance: Loader | null = null;
+let loadPromise: Promise<typeof google> | null = null;
+
+// Get API key
+export const getGoogleMapsApiKey = (): string => {
+  return 'AIzaSyA1Fn93oOxNsLhhc3DjYhcaPik8AlC2rEA';
+};
+
+// Create or get the singleton loader with ALL required libraries
+export const getGoogleMapsLoader = (): Loader => {
+  if (!loaderInstance) {
+    loaderInstance = new Loader({
+      apiKey: getGoogleMapsApiKey(),
+      version: 'weekly',
+      libraries: ['places', 'geometry'] // Include ALL libraries needed by any component
+    });
+  }
+  return loaderInstance;
+};
+
+// Load Google Maps (returns cached promise if already loading/loaded)
+export const loadGoogleMaps = async (): Promise<typeof google> => {
+  if (!loadPromise) {
+    const loader = getGoogleMapsLoader();
+    loadPromise = loader.load();
+  }
+  return loadPromise;
+};
+
+// Check if Google Maps is already loaded
+export const isGoogleMapsLoaded = (): boolean => {
+  return typeof google !== 'undefined' && 
+         typeof google.maps !== 'undefined';
+};
+
 // Generate mock coordinates for venues without lat/lng
 export const generateMockCoordinates = (index: number, total: number) => {
-  // Spread venues across UK
-  const ukBounds = {
-    north: 60.8,
-    south: 49.9,
-    east: 1.8,
-    west: -8.6
+  // Spread venues across South Australia
+  const saBounds = {
+    north: -32.0,
+    south: -38.0,
+    east: 141.0,
+    west: 135.0
   };
   
-  const latRange = ukBounds.north - ukBounds.south;
-  const lngRange = ukBounds.east - ukBounds.west;
+  const latRange = saBounds.north - saBounds.south;
+  const lngRange = saBounds.east - saBounds.west;
   
   return {
-    lat: ukBounds.south + (latRange * Math.random()),
-    lng: ukBounds.west + (lngRange * Math.random())
+    lat: saBounds.south + (latRange * Math.random()),
+    lng: saBounds.west + (lngRange * Math.random())
   };
 };
 
@@ -57,9 +95,4 @@ export const createVenueMarkerIcon = (number: number) => {
     scaledSize: new google.maps.Size(40, 40),
     anchor: new google.maps.Point(20, 20)
   };
-};
-
-// Get API key from environment or return placeholder
-export const getGoogleMapsApiKey = (): string => {
-  return 'AIzaSyA1Fn93oOxNsLhhc3DjYhcaPik8AlC2rEA';
 };

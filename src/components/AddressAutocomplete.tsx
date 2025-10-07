@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
-import { Loader } from '@googlemaps/js-api-loader';
+import { loadGoogleMaps } from '@/lib/googleMaps';
 
 interface AddressAutocompleteProps {
   value: string;
@@ -26,13 +26,10 @@ const AddressAutocomplete: React.FC<AddressAutocompleteProps> = ({
     const initAutocomplete = async () => {
       try {
         setIsLoading(true);
-        const loader = new Loader({
-          apiKey: 'AIzaSyA1Fn93oOxNsLhhc3DjYhcaPik8AlC2rEA',
-          version: 'weekly',
-          libraries: ['places']
-        });
+        setError(null);
 
-        await loader.load();
+        // Use centralized loader
+        await loadGoogleMaps();
 
         if (inputRef.current) {
           const autocomplete = new google.maps.places.Autocomplete(inputRef.current, {

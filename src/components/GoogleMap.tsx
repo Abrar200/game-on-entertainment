@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Loader } from '@googlemaps/js-api-loader';
+import { loadGoogleMaps } from '@/lib/googleMaps';
 
 interface Venue {
   id: string;
@@ -14,7 +12,7 @@ interface Venue {
 interface GoogleMapProps {
   venues: Venue[];
   apiKey: string;
-  showRoute?: boolean; // NEW: Show route lines between venues
+  showRoute?: boolean; // Show route lines between venues
 }
 
 const GoogleMap: React.FC<GoogleMapProps> = ({ venues, apiKey, showRoute = false }) => {
@@ -57,19 +55,15 @@ const GoogleMap: React.FC<GoogleMapProps> = ({ venues, apiKey, showRoute = false
   const initializeMap = async () => {
     try {
       setLoading(true);
+      setError(null);
 
-      const loader = new Loader({
-        apiKey: apiKey,
-        version: 'weekly',
-        libraries: ['places', 'geometry']
-      });
-
-      await loader.load();
+      // Use centralized loader
+      await loadGoogleMaps();
 
       if (!mapRef.current) return;
 
-      // Center on South Australia (where most venues are likely located)
-      const southAustraliaCenter = { lat: -34.9285, lng: 138.6007 }; // Adelaide, SA
+      // Center on South Australia (Adelaide)
+      const southAustraliaCenter = { lat: -34.9285, lng: 138.6007 };
 
       const mapInstance = new google.maps.Map(mapRef.current, {
         center: southAustraliaCenter,

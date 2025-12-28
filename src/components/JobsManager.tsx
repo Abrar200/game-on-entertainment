@@ -181,8 +181,8 @@ const JobsManager: React.FC<JobsManagerProps> = ({
   };
 
   
-  // UPDATED handleRestoreJob function for JobsManager.tsx
-  
+  // CORRECTED handleRestoreJob function for JobsManager.tsx
+
   const handleRestoreJob = async (job: Job) => {
     try {
       console.log('🔄 Restoring job from archive:', job.title);
@@ -190,7 +190,8 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       // Prepare update data
       const updateData: any = { 
         archived: false,
-        status: job.status === 'completed' ? 'open' : job.status // Reset status if was completed
+        // Use 'pending' instead of 'open' - reset to pending when restoring completed jobs
+        status: job.status === 'completed' ? 'pending' : job.status
       };
       
       // Clear scheduled_date if it's in the past (to avoid constraint violation)
@@ -208,7 +209,10 @@ const JobsManager: React.FC<JobsManagerProps> = ({
         .update(updateData)
         .eq('id', job.id);
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Restore error details:', error);
+        throw error;
+      }
 
       const message = updateData.scheduled_date === null 
         ? `${job.title} has been restored to active jobs (past schedule date was cleared)`

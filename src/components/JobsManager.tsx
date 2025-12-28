@@ -180,23 +180,43 @@ const JobsManager: React.FC<JobsManagerProps> = ({
     }
   };
 
+  
+  // UPDATED handleRestoreJob function for JobsManager.tsx
+  
   const handleRestoreJob = async (job: Job) => {
     try {
       console.log('🔄 Restoring job from archive:', job.title);
       
+      // Prepare update data
+      const updateData: any = { 
+        archived: false,
+        status: job.status === 'completed' ? 'open' : job.status // Reset status if was completed
+      };
+      
+      // Clear scheduled_date if it's in the past (to avoid constraint violation)
+      if (job.scheduled_date) {
+        const scheduledDate = new Date(job.scheduled_date);
+        const now = new Date();
+        if (scheduledDate < now) {
+          updateData.scheduled_date = null;
+          console.log('⚠️ Clearing past scheduled_date on restore');
+        }
+      }
+      
       const { error } = await supabase
         .from('jobs')
-        .update({ 
-          archived: false,
-          status: job.status === 'completed' ? 'open' : job.status // Reset status if was completed
-        })
+        .update(updateData)
         .eq('id', job.id);
 
       if (error) throw error;
 
+      const message = updateData.scheduled_date === null 
+        ? `${job.title} has been restored to active jobs (past schedule date was cleared)`
+        : `${job.title} has been restored to active jobs`;
+
       toast({
         title: 'Job Restored',
-        description: `${job.title} has been restored to active jobs`
+        description: message
       });
 
       await fetchJobs();

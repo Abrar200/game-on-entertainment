@@ -5,9 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { 
   X, MapPin, Calendar, DollarSign, FileText, Gift, TrendingUp, Loader2, 
-  History, Wrench, Save, X as XIcon, Info, AlertTriangle, Package 
+  History, Wrench, Save, X as XIcon, Info, AlertTriangle, Package, Ruler
 } from 'lucide-react';
 import { MachineBarcodeDisplay } from './MachineBarcodeDisplay';
 import { MachineEditDialog } from './MachineEditDialog';
@@ -70,6 +71,15 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
     parts_needed: '',
     safety_notes: ''
   });
+  const [measurements, setMeasurements] = useState<any>(null);
+  const [isEditingMeasurements, setIsEditingMeasurements] = useState(false);
+  const [measurementsForm, setMeasurementsForm] = useState({
+    width_cm: '',
+    depth_cm: '',
+    height_cm: '',
+    weight_kg: '',
+    notes: ''
+  });
   const [machineStats, setMachineStats] = useState<MachineStats>({
     totalEarnings: 0,
     totalReports: 0,
@@ -83,6 +93,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
   useEffect(() => {
     fetchMachineStats();
     fetchServiceInfo();
+    fetchMeasurements();
   }, [machine.id]);
 
   const canEditServiceInfo = () => {
@@ -159,6 +170,53 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
     }
   };
 
+  const fetchMeasurements = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('machine_measurements')
+        .select('*')
+        .eq('machine_id', machine.id)
+        .maybeSingle();
+      if (error && error.code !== 'PGRST116') return;
+      if (data) {
+        setMeasurements(data);
+        setMeasurementsForm({
+          width_cm: data.width_cm?.toString() || '',
+          depth_cm: data.depth_cm?.toString() || '',
+          height_cm: data.height_cm?.toString() || '',
+          weight_kg: data.weight_kg?.toString() || '',
+          notes: data.notes || ''
+        });
+      }
+    } catch (err) {
+      console.warn('Could not fetch measurements:', err);
+    }
+  };
+
+  const handleSaveMeasurements = async () => {
+    try {
+      const payload = {
+        machine_id: machine.id,
+        width_cm: measurementsForm.width_cm ? parseFloat(measurementsForm.width_cm) : null,
+        depth_cm: measurementsForm.depth_cm ? parseFloat(measurementsForm.depth_cm) : null,
+        height_cm: measurementsForm.height_cm ? parseFloat(measurementsForm.height_cm) : null,
+        weight_kg: measurementsForm.weight_kg ? parseFloat(measurementsForm.weight_kg) : null,
+        notes: measurementsForm.notes.trim() || null,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabase
+        .from('machine_measurements')
+        .upsert(payload, { onConflict: 'machine_id' });
+      if (error) throw error;
+      toast({ title: 'Success', description: 'Measurements saved' });
+      setIsEditingMeasurements(false);
+      await fetchMeasurements();
+    } catch (err) {
+      console.error('Error saving measurements:', err);
+      toast({ title: 'Error', description: 'Failed to save measurements', variant: 'destructive' });
+    }
+  };
+
   const fetchMachineStats = async () => {
     try {
       setMachineStats(prev => ({ ...prev, loading: true }));
@@ -167,7 +225,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
       // Fetch machine reports
       const { data: reports, error: reportsError } = await supabase
         .from('machine_reports')
-        .select('money_collected, toys_dispensed, prize_value, report_date, created_at')
+        .select('money_collected, toys_dispensed, prize_value, report_date, created_at, tokens_in_game')
         .eq('machine_id', machine.id)
         .order('created_at', { ascending: false });
 
@@ -190,15 +248,25 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
       }
 
       // Calculate statistics
-      const totalEarnings = reports?.reduce((sum, report) => sum + (report.money_collected || 0), 0) || 0;
+      // Token value formula: tokens_in_game × $0.83 + cash (display only - not used in reports)
+      const TOKEN_VALUE = 0.83;
+      const totalCash = reports?.reduce((sum, report) => sum + (report.money_collected || 0), 0) || 0;
+      const totalTokenValue = reports?.reduce((sum, report) => sum + ((report.tokens_in_game || 0) * TOKEN_VALUE), 0) || 0;
+      const totalEarnings = totalCash + totalTokenValue;
       const totalToysDispensed = reports?.reduce((sum, report) => sum + (report.toys_dispensed || 0), 0) || 0;
       
-      // Calculate average payout percentage
+      // Calculate average payout % using token-adjusted earnings
       let averagePayout: number | null = null;
       if (reports && reports.length > 0) {
         const payoutPercentages = reports
-          .filter(report => report.money_collected > 0 && report.prize_value > 0)
-          .map(report => (report.prize_value / report.money_collected) * 100);
+          .filter(report => {
+            const adjustedEarnings = (report.money_collected || 0) + ((report.tokens_in_game || 0) * TOKEN_VALUE);
+            return adjustedEarnings > 0 && report.prize_value > 0;
+          })
+          .map(report => {
+            const adjustedEarnings = (report.money_collected || 0) + ((report.tokens_in_game || 0) * TOKEN_VALUE);
+            return (report.prize_value / adjustedEarnings) * 100;
+          });
         
         if (payoutPercentages.length > 0) {
           averagePayout = payoutPercentages.reduce((sum, payout) => sum + payout, 0) / payoutPercentages.length;
@@ -398,6 +466,7 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                             ${machineStats.totalEarnings.toFixed(2)}
                           </div>
                           <div className="text-sm text-green-700">Total Earnings</div>
+                          <div className="text-xs text-green-500 mt-0.5">(incl. token value)</div>
                         </div>
                         <div className="text-center p-3 bg-blue-50 rounded-lg">
                           <div className="text-2xl font-bold text-blue-600">
@@ -690,6 +759,119 @@ export const MachineProfile: React.FC<MachineProfileProps> = ({ machine, onClose
                       </p>
                     )}
                   </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Game Measurements */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Ruler className="h-5 w-5 text-teal-600" />
+                    Game Measurements
+                  </CardTitle>
+                  {!isEditingMeasurements && (
+                    <Button size="sm" variant="outline" onClick={() => setIsEditingMeasurements(true)}>
+                      <Wrench className="h-4 w-4 mr-1" />
+                      {measurements ? 'Edit' : 'Add Measurements'}
+                    </Button>
+                  )}
+                  {isEditingMeasurements && (
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleSaveMeasurements}>
+                        <Save className="h-4 w-4 mr-1" />Save
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setIsEditingMeasurements(false)}>
+                        <XIcon className="h-4 w-4 mr-1" />Cancel
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isEditingMeasurements ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label>Width (cm)</Label>
+                        <Input
+                          type="number" step="0.1" min="0"
+                          value={measurementsForm.width_cm}
+                          onChange={e => setMeasurementsForm({ ...measurementsForm, width_cm: e.target.value })}
+                          placeholder="e.g. 60"
+                        />
+                      </div>
+                      <div>
+                        <Label>Depth (cm)</Label>
+                        <Input
+                          type="number" step="0.1" min="0"
+                          value={measurementsForm.depth_cm}
+                          onChange={e => setMeasurementsForm({ ...measurementsForm, depth_cm: e.target.value })}
+                          placeholder="e.g. 70"
+                        />
+                      </div>
+                      <div>
+                        <Label>Height (cm)</Label>
+                        <Input
+                          type="number" step="0.1" min="0"
+                          value={measurementsForm.height_cm}
+                          onChange={e => setMeasurementsForm({ ...measurementsForm, height_cm: e.target.value })}
+                          placeholder="e.g. 175"
+                        />
+                      </div>
+                      <div>
+                        <Label>Weight (kg)</Label>
+                        <Input
+                          type="number" step="0.1" min="0"
+                          value={measurementsForm.weight_kg}
+                          onChange={e => setMeasurementsForm({ ...measurementsForm, weight_kg: e.target.value })}
+                          placeholder="e.g. 85"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Notes</Label>
+                      <Textarea
+                        value={measurementsForm.notes}
+                        onChange={e => setMeasurementsForm({ ...measurementsForm, notes: e.target.value })}
+                        placeholder="Any additional size or placement notes..."
+                        rows={2}
+                      />
+                    </div>
+                  </div>
+                ) : measurements ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {measurements.width_cm && (
+                      <div className="text-center p-3 bg-teal-50 rounded-lg">
+                        <div className="text-xl font-bold text-teal-700">{measurements.width_cm} cm</div>
+                        <div className="text-xs text-teal-600">Width</div>
+                      </div>
+                    )}
+                    {measurements.depth_cm && (
+                      <div className="text-center p-3 bg-teal-50 rounded-lg">
+                        <div className="text-xl font-bold text-teal-700">{measurements.depth_cm} cm</div>
+                        <div className="text-xs text-teal-600">Depth</div>
+                      </div>
+                    )}
+                    {measurements.height_cm && (
+                      <div className="text-center p-3 bg-teal-50 rounded-lg">
+                        <div className="text-xl font-bold text-teal-700">{measurements.height_cm} cm</div>
+                        <div className="text-xs text-teal-600">Height</div>
+                      </div>
+                    )}
+                    {measurements.weight_kg && (
+                      <div className="text-center p-3 bg-teal-50 rounded-lg">
+                        <div className="text-xl font-bold text-teal-700">{measurements.weight_kg} kg</div>
+                        <div className="text-xs text-teal-600">Weight</div>
+                      </div>
+                    )}
+                    {measurements.notes && (
+                      <div className="col-span-2 md:col-span-4 text-sm text-gray-600 italic">{measurements.notes}</div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-gray-500 text-sm italic">No measurements recorded yet.</p>
                 )}
               </CardContent>
             </Card>

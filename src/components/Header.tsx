@@ -1,6 +1,3 @@
-import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { 
   Bell, Settings, Plus, FileText, Gamepad2, MapPin, Gift, Wrench, 
@@ -9,6 +6,9 @@ import {
   Crown, Eye, User, Loader2, Cog, Truck // Added Truck for equipment hire icon
 } from 'lucide-react';
 import { Route } from 'lucide-react';
+import React, { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 
 interface HeaderProps {
@@ -276,6 +276,18 @@ const Header: React.FC<HeaderProps> = ({
                 Jobs
               </Button>
             )}
+
+            {/* Machine Moves & Requests */}
+            <Button
+              onClick={createNavHandler('machine-moves', 'Machine Moves')}
+              variant="ghost"
+              className="text-white hover:bg-white/20"
+              type="button"
+              disabled={loggingOut}
+            >
+              <Truck className="h-4 w-4 mr-2" />
+              Moves
+            </Button>
             
             {/* Reports - Role-dependent access */}
             {(hasPermission('view_financial_reports') || hasPermission('edit_machine_reports')) && (

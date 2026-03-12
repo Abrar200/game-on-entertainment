@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, AlertTriangle, Clock, CheckCircle, Edit, Scan, List, CalendarDays, Archive, History, Check } from 'lucide-react';
+import { Plus, AlertTriangle, Clock, CheckCircle, Edit, Scan, List, CalendarDays, Archive, History, Check, Search, Camera, Trash2, Loader2 } from 'lucide-react';
 import { MachineSerialSearch } from './MachineSerialSearch';
 import { AutoBarcodeScanner } from './AutoBarcodeScanner';
 import JobEditDialog from './JobEditDialog';
@@ -29,6 +29,7 @@ interface Job {
   progress_updates?: string[];
   completed_at?: string;
   completed_by?: string;
+  assigned_to?: string | null;
   archived?: boolean;
   machine?: {
     name: string;
@@ -56,6 +57,9 @@ const JobsManager: React.FC<JobsManagerProps> = ({
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('list');
   const [completingJobId, setCompletingJobId] = useState<string | null>(null);
+  const [historySearch, setHistorySearch] = useState('');
+  const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -360,9 +364,35 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       if (data && data[0]) {
         console.log('📧 Attempting to send notification...');
         await sendJobNotification(data[0], data[0].machine, data[0].machine?.venue);
+
+        // Upload any pending photos
+        if (pendingPhotos.length > 0) {
+          setUploadingPhoto(true);
+          const uploadedUrls: string[] = [];
+          for (const file of pendingPhotos) {
+            try {
+              const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+              const path = `job-photos/${data[0].id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+              const { data: uploadData, error: uploadErr } = await supabase.storage
+                .from('venues')
+                .upload(path, file, { cacheControl: '3600', upsert: false });
+              if (!uploadErr && uploadData) {
+                const { data: urlData } = supabase.storage.from('venues').getPublicUrl(uploadData.path);
+                uploadedUrls.push(urlData.publicUrl);
+              }
+            } catch (err) {
+              console.warn('Photo upload failed for one file:', err);
+            }
+          }
+          if (uploadedUrls.length > 0) {
+            await supabase.from('jobs').update({ photo_urls: uploadedUrls }).eq('id', data[0].id);
+          }
+          setUploadingPhoto(false);
+        }
       }
 
       setFormData({ title: '', description: '', machine_id: '', priority: 'medium' });
+      setPendingPhotos([]);
       setShowForm(false);
       await fetchJobs();
 
@@ -499,6 +529,21 @@ const JobsManager: React.FC<JobsManagerProps> = ({
         </CardHeader>
         <CardContent>
           {job.description && <p className="text-gray-700 mb-2">{job.description}</p>}
+          {(job as any).photo_urls && (job as any).photo_urls.length > 0 && (
+            <div className="flex gap-1.5 flex-wrap mb-2">
+              {(job as any).photo_urls.slice(0, 4).map((url: string, i: number) => (
+                <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                  className="w-14 h-14 rounded border overflow-hidden block bg-gray-50 hover:opacity-80 transition-opacity shrink-0">
+                  <img src={url} alt="" className="w-full h-full object-cover" />
+                </a>
+              ))}
+              {(job as any).photo_urls.length > 4 && (
+                <div className="w-14 h-14 rounded border bg-gray-100 flex items-center justify-center text-xs text-gray-500 font-medium">
+                  +{(job as any).photo_urls.length - 4}
+                </div>
+              )}
+            </div>
+          )}
           <div className="text-xs text-gray-500 space-y-1">
             <p>Created: {new Date(job.created_at).toLocaleDateString()}</p>
             {job.completed_at && (
@@ -506,6 +551,9 @@ const JobsManager: React.FC<JobsManagerProps> = ({
             )}
             {job.completed_by && (
               <p>Completed by: {job.completed_by}</p>
+            )}
+            {job.assigned_to && (
+              <p>Assigned to: {job.assigned_to}</p>
             )}
           </div>
         </CardContent>
@@ -603,13 +651,57 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                 </Select>
               </div>
 
+              {/* Attach Photos */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="flex items-center gap-1.5">
+                    <Camera className="h-3.5 w-3.5 text-blue-500" />
+                    Attach Photos (optional)
+                  </Label>
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        setPendingPhotos(prev => [...prev, ...files]);
+                        e.target.value = '';
+                      }}
+                    />
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs border rounded-md bg-white hover:bg-gray-50 text-gray-600 cursor-pointer">
+                      <Camera className="h-3 w-3" />Add
+                    </span>
+                  </label>
+                </div>
+                {pendingPhotos.length > 0 && (
+                  <div className="grid grid-cols-4 gap-2">
+                    {pendingPhotos.map((file, i) => (
+                      <div key={i} className="relative group rounded overflow-hidden border aspect-square bg-gray-50">
+                        <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => setPendingPhotos(prev => prev.filter((_, idx) => idx !== i))}
+                          className="absolute top-0.5 right-0.5 p-0.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="flex gap-2">
                 <Button
                   type="submit"
                   className="bg-green-600 hover:bg-green-700"
-                  disabled={loading || !formData.machine_id}
+                  disabled={loading || uploadingPhoto || !formData.machine_id}
                 >
-                  {loading ? 'Creating...' : 'Create Job'}
+                  {loading || uploadingPhoto ? (
+                    <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" />{uploadingPhoto ? 'Uploading photos...' : 'Creating...'}</>
+                  ) : 'Create Job'}
                 </Button>
                 <Button
                   type="button"
@@ -617,6 +709,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                   onClick={() => {
                     setShowForm(false);
                     setFormData({ title: '', description: '', machine_id: '', priority: 'medium' });
+                    setPendingPhotos([]);
                   }}
                   disabled={loading}
                 >
@@ -708,11 +801,56 @@ const JobsManager: React.FC<JobsManagerProps> = ({
             </div>
           </div>
 
-          {/* Combined list of all jobs sorted by most recent */}
-          {[...jobs, ...archivedJobs]
-            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-            .map((job) => renderJobCard(job, job.archived))
-          }
+          {/* Search bar */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              className="pl-9"
+              placeholder="Search by machine name, venue, job title or description…"
+              value={historySearch}
+              onChange={(e) => setHistorySearch(e.target.value)}
+            />
+          </div>
+
+          {/* Last 6 months combined list */}
+          {(() => {
+            const sixMonthsAgo = new Date();
+            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+            const q = historySearch.toLowerCase();
+            const allJobs = [...jobs, ...archivedJobs]
+              .filter(job => new Date(job.created_at) >= sixMonthsAgo)
+              .filter(job => {
+                if (!q) return true;
+                return (
+                  job.title?.toLowerCase().includes(q) ||
+                  job.description?.toLowerCase().includes(q) ||
+                  job.machine?.name?.toLowerCase().includes(q) ||
+                  job.machine?.venue?.name?.toLowerCase().includes(q)
+                );
+              })
+              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+            if (allJobs.length === 0) {
+              return (
+                <Card>
+                  <CardContent className="py-8 text-center">
+                    <p className="text-gray-500">
+                      {q ? 'No jobs match your search.' : 'No jobs in the last 6 months.'}
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            }
+            return (
+              <>
+                <p className="text-sm text-gray-500">
+                  Showing {allJobs.length} job{allJobs.length !== 1 ? 's' : ''} from the last 6 months
+                  {q && ` matching "${historySearch}"`}
+                </p>
+                {allJobs.map((job) => renderJobCard(job, !!job.archived))}
+              </>
+            );
+          })()}
         </TabsContent>
       </Tabs>
 

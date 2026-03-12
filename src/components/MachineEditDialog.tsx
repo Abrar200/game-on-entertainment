@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, Package, Wrench, CreditCard, X } from 'lucide-react';
+import { Plus, Trash2, Package, Wrench, CreditCard, X, Search } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useToast } from '@/hooks/use-toast';
 import ImageUpload from '@/components/ImageUpload';
@@ -56,6 +56,7 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
   const [payWaveTerminals, setPayWaveTerminals] = useState<PayWaveTerminal[]>([
     { name: '', terminal_number: '' }
   ]);
+  const [venueSearch, setVenueSearch] = useState('');
   
   const [formData, setFormData] = useState({
     name: '',
@@ -816,12 +817,38 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
                                     <SelectValue placeholder="Select a venue (optional)" />
                                 </SelectTrigger>
                                 <SelectContent>
+                                    {/* Search bar inside dropdown */}
+                                    <div className="flex items-center px-2 py-1.5 border-b sticky top-0 bg-white z-10">
+                                        <Search className="h-3.5 w-3.5 text-gray-400 mr-2 shrink-0" />
+                                        <input
+                                            className="text-sm outline-none w-full placeholder:text-gray-400"
+                                            placeholder="Search venues..."
+                                            value={venueSearch}
+                                            onChange={(e) => setVenueSearch(e.target.value)}
+                                            onKeyDown={(e) => e.stopPropagation()}
+                                        />
+                                        {venueSearch && (
+                                            <button
+                                                className="ml-1 text-gray-400 hover:text-gray-600"
+                                                onClick={() => setVenueSearch('')}
+                                                type="button"
+                                            >
+                                                <X className="h-3 w-3" />
+                                            </button>
+                                        )}
+                                    </div>
                                     <SelectItem value="none">No venue</SelectItem>
-                                    {venues.map((venue) => (
-                                        <SelectItem key={venue.id} value={venue.id}>
-                                            {venue.name}
-                                        </SelectItem>
-                                    ))}
+                                    {venues
+                                        .filter(v => v.name.toLowerCase().includes(venueSearch.toLowerCase()))
+                                        .map((venue) => (
+                                            <SelectItem key={venue.id} value={venue.id}>
+                                                {venue.name}
+                                            </SelectItem>
+                                        ))
+                                    }
+                                    {venues.filter(v => v.name.toLowerCase().includes(venueSearch.toLowerCase())).length === 0 && (
+                                        <div className="px-3 py-2 text-sm text-gray-400">No venues found</div>
+                                    )}
                                 </SelectContent>
                             </Select>
                         </div>
@@ -1116,5 +1143,3 @@ export const MachineEditDialog: React.FC<MachineEditDialogProps> = ({
   );
 
   };
-
-  export default MachineEditDialog;

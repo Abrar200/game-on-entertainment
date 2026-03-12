@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Plus, Clock, CalendarIcon, X } from 'lucide-react';
+import { Plus, Clock, CalendarIcon, X, User, Camera, Trash2, ImageIcon, Loader2 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -23,13 +23,21 @@ interface Job {
   status: string;
   scheduled_date?: string;
   progress_updates?: string[];
-  machine_id?: string;
+  photo_urls?: string[];
+  assigned_to?: string | null;
   created_at?: string;
   machine?: {
     name: string;
     type: string;
     venue?: { name: string };
   };
+}
+
+interface StaffMember {
+  id: string;
+  full_name?: string;
+  username?: string;
+  role?: string;
 }
 
 interface JobEditDialogProps {
@@ -42,16 +50,20 @@ interface JobEditDialogProps {
 export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose, onUpdate }) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [formData, setFormData] = useState({
     title: job?.title || '',
     description: job?.description || '',
     priority: job?.priority || 'medium',
     status: job?.status || 'open',
-    scheduled_date: job?.scheduled_date || null
+    scheduled_date: job?.scheduled_date || null,
+    assigned_to: job?.assigned_to || null as string | null
   });
   const [newUpdate, setNewUpdate] = useState('');
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [localProgressUpdates, setLocalProgressUpdates] = useState<string[]>([]);
+  const [localPhotoUrls, setLocalPhotoUrls] = useState<string[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const normalizeStatus = (status: string): string => {
     return status.toLowerCase();
@@ -68,6 +80,23 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
     return labels[normalized] || status;
   };
 
+  // Fetch staff members for the assign dropdown
+  useEffect(() => {
+    const fetchStaff = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('id, full_name, username, role')
+          .eq('is_active', true)
+          .order('full_name', { ascending: true });
+        if (!error && data) setStaffMembers(data);
+      } catch (err) {
+        console.warn('Could not fetch staff members:', err);
+      }
+    };
+    fetchStaff();
+  }, []);
+
   React.useEffect(() => {
     if (job) {
       setFormData({
@@ -75,9 +104,11 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
         description: job.description,
         priority: job.priority,
         status: normalizeStatus(job.status),
-        scheduled_date: job.scheduled_date || null
+        scheduled_date: job.scheduled_date || null,
+        assigned_to: (job as any).assigned_to || null
       });
       setLocalProgressUpdates(job.progress_updates || []);
+      setLocalPhotoUrls((job as any).photo_urls || []);
     }
   }, [job]);
 
@@ -91,7 +122,8 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
         description: formData.description,
         priority: formData.priority,
         status: formData.status,
-        scheduled_date: formData.scheduled_date
+        scheduled_date: formData.scheduled_date,
+        assigned_to: formData.assigned_to || null
       };
 
       console.log('💾 Updating job with data:', updateData);
@@ -162,6 +194,43 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
     } finally {
       setLoading(false);
     }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!job || !e.target.files || e.target.files.length === 0) return;
+    setUploadingPhoto(true);
+    try {
+      const file = e.target.files[0];
+      if (!file.type.startsWith('image/')) {
+        toast({ title: 'Error', description: 'Please select an image file', variant: 'destructive' });
+        return;
+      }
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+      const path = `job-photos/${job.id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { data, error: uploadError } = await supabase.storage
+        .from('venues')
+        .upload(path, file, { cacheControl: '3600', upsert: false });
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage.from('venues').getPublicUrl(data.path);
+      const newUrls = [...localPhotoUrls, urlData.publicUrl];
+      await supabase.from('jobs').update({ photo_urls: newUrls }).eq('id', job.id);
+      setLocalPhotoUrls(newUrls);
+      toast({ title: 'Photo uploaded!' });
+      onUpdate();
+    } catch (err: any) {
+      toast({ title: 'Upload failed', description: err.message, variant: 'destructive' });
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleDeletePhoto = async (url: string) => {
+    if (!job) return;
+    const newUrls = localPhotoUrls.filter(u => u !== url);
+    await supabase.from('jobs').update({ photo_urls: newUrls }).eq('id', job.id);
+    setLocalPhotoUrls(newUrls);
+    onUpdate();
   };
 
   const handleScheduledDateChange = (date: Date | undefined) => {
@@ -294,6 +363,33 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
             </div>
           </div>
 
+          {/* Assign to staff member */}
+          <div>
+            <Label className="flex items-center gap-1.5">
+              <User className="h-3.5 w-3.5" />
+              Assign To
+            </Label>
+            <Select
+              value={formData.assigned_to || 'unassigned'}
+              onValueChange={(value) => setFormData({ ...formData, assigned_to: value === 'unassigned' ? null : value })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Unassigned" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="unassigned">Unassigned</SelectItem>
+                {staffMembers.map(staff => (
+                  <SelectItem key={staff.id} value={staff.id}>
+                    {staff.full_name || staff.username}
+                    {staff.role && (
+                      <span className="text-gray-400 ml-1 text-xs">· {staff.role}</span>
+                    )}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <Separator />
 
           <div>
@@ -347,6 +443,67 @@ export const JobEditDialog: React.FC<JobEditDialogProps> = ({ job, open, onClose
                 <p className="text-gray-500 text-sm">No progress updates yet</p>
               )}
             </div>
+          </div>
+
+          <Separator />
+
+          {/* Job Photos */}
+          <div>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="font-semibold flex items-center gap-1.5">
+                <Camera className="h-4 w-4 text-blue-500" />
+                Job Photos
+                {localPhotoUrls.length > 0 && (
+                  <span className="text-xs text-gray-400 font-normal">({localPhotoUrls.length})</span>
+                )}
+              </h3>
+              <label className="cursor-pointer">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handlePhotoUpload}
+                  disabled={uploadingPhoto}
+                />
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+                  uploadingPhoto
+                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 cursor-pointer'
+                }`}>
+                  {uploadingPhoto ? (
+                    <><Loader2 className="h-3.5 w-3.5 animate-spin" />Uploading...</>
+                  ) : (
+                    <><Camera className="h-3.5 w-3.5" />Add Photo</>
+                  )}
+                </span>
+              </label>
+            </div>
+
+            {localPhotoUrls.length === 0 ? (
+              <p className="text-gray-400 text-sm text-center py-4 border border-dashed rounded-lg">
+                No photos attached yet
+              </p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                {localPhotoUrls.map((url, i) => (
+                  <div key={i} className="relative group rounded-lg overflow-hidden border bg-gray-50 aspect-square">
+                    <img src={url} alt={`Job photo ${i + 1}`} className="w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
+                      <div className="opacity-0 group-hover:opacity-100 flex gap-1.5">
+                        <a href={url} target="_blank" rel="noopener noreferrer"
+                          className="p-1.5 bg-white rounded-full text-gray-700 hover:text-blue-600 transition-colors">
+                          <Camera className="h-3.5 w-3.5" />
+                        </a>
+                        <button onClick={() => handleDeletePhoto(url)}
+                          className="p-1.5 bg-white rounded-full text-gray-700 hover:text-red-600 transition-colors">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-2 pt-4">

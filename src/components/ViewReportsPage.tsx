@@ -299,9 +299,44 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
 
       if (error) throw error;
 
+      // When a venue report is marked as paid, auto-mark all associated machine reports paid too
+      if (reportType === 'venue' && newStatus === true) {
+        try {
+          // Find the venue report to get venue_id and date range
+          const venueReport = venueReports.find(r => r.id === reportId);
+          if (venueReport?.venue_id) {
+            // Match machine reports by venue_id and date range (if available)
+            let query = supabase
+              .from('machine_reports')
+              .update({ paid_status: true })
+              .eq('venue_id', venueReport.venue_id)
+              .eq('paid_status', false);
+
+            // Narrow to the report's date range if available
+            if (venueReport.date_range_start && venueReport.date_range_end) {
+              query = query
+                .gte('report_date', venueReport.date_range_start)
+                .lte('report_date', venueReport.date_range_end);
+            }
+
+            const { error: machineError } = await query;
+            if (machineError) {
+              console.warn('Could not auto-mark machine reports:', machineError);
+            } else {
+              console.log('✅ Associated machine reports marked as paid');
+            }
+          }
+        } catch (autoMarkError) {
+          console.warn('Error auto-marking machine reports:', autoMarkError);
+          // Don't fail the whole operation if this part errors
+        }
+      }
+
       toast({
         title: 'Success',
-        description: `Report marked as ${newStatus ? 'paid' : 'unpaid'}`
+        description: reportType === 'venue' && newStatus
+          ? 'Venue report marked paid — associated machine reports updated too'
+          : `Report marked as ${newStatus ? 'paid' : 'unpaid'}`
       });
 
       // Refresh data
@@ -1067,6 +1102,7 @@ const ViewReportsPage: React.FC<ViewReportsPageProps> = ({ userProfile, hasPermi
       </div>
     </div>
   );
-};
+}
+
 
 export default ViewReportsPage;

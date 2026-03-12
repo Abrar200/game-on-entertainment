@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import InventoryManager from './InventoryManager';
 import ReportGenerator from './ReportGenerator';
 import Dashboard from './Dashboard';
-import Header from './Header';
+import Header from "./Header";
 import MachinesManager from './MachinesManager';
 import VenuesManager from './VenuesManager';
 import PrizesManager from './PrizesManager';
@@ -20,9 +20,10 @@ import StockAnalytics from './StockAnalytics';
 import MachineHistoryManager from './MachineHistoryManager';
 import VenueMap from './VenueMap';
 import EmailNotificationManager from './EmailNotificationManager';
-import ViewReportsPage from './ViewReportsPage';
+import ViewReportsPage from "./ViewReportsPage";
 import EquipmentHireManager from './EquipmentHireManager'; // Add this import
 import RunsManager from './RunsManager';
+import MachineMoves from './MachineMoves';
 
 
 interface AppLayoutProps {
@@ -244,6 +245,9 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           );
         }
         return <RunsManager userRole={userProfile.role} hasPermission={hasPermission} />;
+
+      case 'machine-moves':
+        return <MachineMoves />;
         
       case 'download':
         if (!hasPermission('manage_settings')) {

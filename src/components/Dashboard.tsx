@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Building2, Cog, Gift, Package, DollarSign, TrendingUp, AlertTriangle, Plus, Users, Activity, Target, Calendar, ArrowUp, ArrowDown, Truck } from 'lucide-react';
+import {
+  Building2, Cog, Gift, DollarSign, AlertTriangle,
+  ChevronLeft, ChevronRight, Trophy, TrendingUp, Package,
+  Clock, Wrench, MapPin
+} from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
-import MachineProblemsTracker from '@/components/MachineProblemsTracker';
 import { supabase } from '@/lib/supabase';
-import { useToast } from '@/hooks/use-toast';
 
 interface DashboardProps {
   onNavigate?: (view: string) => void;
@@ -19,784 +21,590 @@ interface DashboardProps {
   hasPermission?: (permission: string) => boolean;
 }
 
-interface BusinessHealth {
-  score: number;
-  issues: string[];
-  improvements: string[];
-  status: 'excellent' | 'good' | 'warning' | 'critical';
+interface Job {
+  id: string;
+  title: string;
+  description?: string;
+  priority: string;
+  status: string;
+  due_date?: string;
+  machine_id?: string;
+  venue_id?: string;
+  machine_name?: string;
+  venue_name?: string;
 }
 
-interface DashboardStats {
-  totalRevenue: number;
-  revenueGrowth: number;
-  averagePayout: number;
-  machineUptime: number;
-  lowStockAlerts: number;
-  completedJobs: number;
-  pendingIssues: number;
-  loading: boolean;
+interface TopMachine {
+  id: string;
+  name: string;
+  type: string;
+  venue_name?: string;
+  total_earnings: number;
+  status: string;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile, hasPermission }) => {
-  const { venues, machines, prizes, parts, setCurrentView } = useAppContext();
-  const { toast } = useToast();
-  const [businessHealth, setBusinessHealth] = useState<BusinessHealth>({
-    score: 0,
-    issues: [],
-    improvements: [],
-    status: 'warning'
-  });
-  const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
-    totalRevenue: 0,
-    revenueGrowth: 0,
-    averagePayout: 0,
-    machineUptime: 0,
-    lowStockAlerts: 0,
-    completedJobs: 0,
-    pendingIssues: 0,
-    loading: true
-  });
-  const [equipmentStats, setEquipmentStats] = useState({
-    totalEquipment: 0,
-    hiredEquipment: 0,
-    availableEquipment: 0,
-    totalValue: 0,
-    loading: true
-  });
+interface TopVenue {
+  id: string;
+  name: string;
+  address?: string;
+  total_revenue: number;
+  total_machines: number;
+}
 
-  useEffect(() => {
-    fetchDashboardData();
-    fetchEquipmentStats();
-  }, [machines, prizes, parts]);
+interface TopPrize {
+  id: string;
+  name: string;
+  category?: string;
+  total_dispensed: number;
+  stock_quantity: number;
+  cost_price?: number;
+}
 
-  // Listen for machine problems updates
-  useEffect(() => {
-    const handleMachineProblemsUpdate = () => {
-      console.log('🔄 Machine problems updated, recalculating business health...');
-      // Delay to allow database updates to complete
-      setTimeout(() => {
-        fetchDashboardData();
-      }, 1000);
-    };
+const PRIORITY_COLOR: Record<string, string> = {
+  urgent: 'bg-red-100 text-red-700 border-red-200',
+  high: 'bg-orange-100 text-orange-700 border-orange-200',
+  medium: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+  low: 'bg-green-100 text-green-700 border-green-200',
+};
 
-    window.addEventListener('machineProblemsUpdated', handleMachineProblemsUpdate);
-    
-    return () => {
-      window.removeEventListener('machineProblemsUpdated', handleMachineProblemsUpdate);
-    };
-  }, []);
+const STATUS_COLOR: Record<string, string> = {
+  pending: 'bg-gray-100 text-gray-700',
+  'in-progress': 'bg-blue-100 text-blue-700',
+  completed: 'bg-green-100 text-green-700',
+};
 
-  const fetchEquipmentStats = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('equipment_hire')
-        .select('status, current_value, purchase_cost');
+const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile }) => {
+  const { venues, machines } = useAppContext();
 
-      if (error) {
-        console.error('Error fetching equipment stats:', error);
-        return;
-      }
+  const [pendingJobs, setPendingJobs] = useState<Job[]>([]);
+  const [topMachines, setTopMachines] = useState<TopMachine[]>([]);
+  const [topVenues, setTopVenues] = useState<TopVenue[]>([]);
+  const [topPrizes, setTopPrizes] = useState<TopPrize[]>([]);
+  const [jobIndex, setJobIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
 
-      const totalEquipment = data?.length || 0;
-      const hiredEquipment = data?.filter(e => e.status === 'hired').length || 0;
-      const availableEquipment = data?.filter(e => e.status === 'available').length || 0;
-      const totalValue = data?.reduce((sum, e) => sum + (e.current_value || e.purchase_cost || 0), 0) || 0;
-
-      setEquipmentStats({
-        totalEquipment,
-        hiredEquipment,
-        availableEquipment,
-        totalValue,
-        loading: false
-      });
-    } catch (error) {
-      console.error('Error fetching equipment stats:', error);
-      setEquipmentStats(prev => ({ ...prev, loading: false }));
-    }
-  };
-
-  const fetchDashboardData = async () => {
-    try {
-      setDashboardStats(prev => ({ ...prev, loading: true }));
-
-      // Fetch revenue data from last 30 days
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-      const { data: recentReports, error: reportsError } = await supabase
-        .from('machine_reports')
-        .select('money_collected, prize_value, created_at')
-        .gte('created_at', thirtyDaysAgo.toISOString());
-
-      // Fetch revenue data from 30-60 days ago for growth calculation
-      const sixtyDaysAgo = new Date();
-      sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-
-      const { data: previousReports, error: prevError } = await supabase
-        .from('machine_reports')
-        .select('money_collected')
-        .gte('created_at', sixtyDaysAgo.toISOString())
-        .lt('created_at', thirtyDaysAgo.toISOString());
-
-      // Fetch jobs data
-      const { data: jobs, error: jobsError } = await supabase
-        .from('jobs')
-        .select('status, created_at')
-        .gte('created_at', thirtyDaysAgo.toISOString());
-
-      if (reportsError) console.error('Reports error:', reportsError);
-      if (prevError) console.error('Previous reports error:', prevError);
-      if (jobsError) console.warn('Jobs error (table may not exist):', jobsError);
-
-      // Calculate statistics
-      const totalRevenue = recentReports?.reduce((sum, report) => sum + (report.money_collected || 0), 0) || 0;
-      const previousRevenue = previousReports?.reduce((sum, report) => sum + (report.money_collected || 0), 0) || 0;
-      const revenueGrowth = previousRevenue > 0 ? ((totalRevenue - previousRevenue) / previousRevenue) * 100 : 0;
-
-      // Calculate average payout
-      const validReports = recentReports?.filter(r => r.money_collected > 0 && r.prize_value > 0) || [];
-      const averagePayout = validReports.length > 0 
-        ? validReports.reduce((sum, r) => sum + ((r.prize_value / r.money_collected) * 100), 0) / validReports.length
-        : 0;
-
-      // Machine uptime calculation
-      const activeMachines = machines.filter(m => m.status === 'active').length;
-      const machineUptime = machines.length > 0 ? (activeMachines / machines.length) * 100 : 100;
-
-      // Stock alerts
-      const lowStockPrizes = prizes.filter(prize => prize.stock_quantity <= 5).length;
-      const lowStockParts = parts.filter(part => part.stock_quantity <= part.low_stock_limit).length;
-      const lowStockAlerts = lowStockPrizes + lowStockParts;
-
-      // Jobs statistics
-      const completedJobs = jobs?.filter(job => job.status === 'completed').length || 0;
-      const pendingIssues = jobs?.filter(job => job.status !== 'completed').length || 0;
-
-      setDashboardStats({
-        totalRevenue,
-        revenueGrowth,
-        averagePayout,
-        machineUptime,
-        lowStockAlerts,
-        completedJobs,
-        pendingIssues,
-        loading: false
-      });
-
-      // Calculate business health (now async)
-      await calculateBusinessHealth({
-        machineUptime,
-        lowStockAlerts,
-        pendingIssues,
-        averagePayout,
-        revenueGrowth
-      });
-
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
-      setDashboardStats(prev => ({ ...prev, loading: false }));
-    }
-  };
-
-  const calculateBusinessHealth = async (stats: {
-    machineUptime: number;
-    lowStockAlerts: number;
-    pendingIssues: number;
-    averagePayout: number;
-    revenueGrowth: number;
-  }) => {
-    let score = 100;
-    const issues: string[] = [];
-    const improvements: string[] = [];
-
-    // Get count of active (non-dismissed) machine problem alerts with enhanced checking
-    let activeMachineProblems = 0;
-    try {
-      // Get dismissed alerts from multiple sources
-      const dismissedAlertsPromises = [
-        supabase.from('machine_problems').select('machine_id, problem_type').not('dismissed_at', 'is', null),
-        Promise.resolve({ data: [] }) // Fallback for localStorage
-      ];
-
-      // Add localStorage fallback
-      try {
-        const localDismissed = localStorage.getItem('dismissedMachineAlerts');
-        if (localDismissed) {
-          const dismissedList = JSON.parse(localDismissed);
-          dismissedAlertsPromises[1] = Promise.resolve({ 
-            data: dismissedList.map((key: string) => {
-              const [machine_id, problem_type] = key.split('_');
-              return { machine_id, problem_type };
-            })
-          });
-        }
-      } catch (e) {
-        // Ignore localStorage errors
-      }
-
-      const [dbResult, localResult] = await Promise.all(dismissedAlertsPromises);
-      
-      // Combine dismissed alerts from both sources
-      const allDismissedAlerts = [
-        ...(dbResult.data || []),
-        ...(localResult.data || [])
-      ];
-
-      // Count machine problems (high parts usage) that aren't dismissed
-      const twelveMonthsAgo = new Date();
-      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
-
-      // Check for recently completed jobs (within last 7 days) that might resolve issues
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      const { data: recentJobs } = await supabase
-        .from('jobs')
-        .select('machine_id, status')
-        .eq('status', 'completed')
-        .gte('created_at', sevenDaysAgo.toISOString());
-
-      const recentlyServicedMachines = new Set(recentJobs?.map(job => job.machine_id) || []);
-
-      const { data: machinePartsData } = await supabase
-        .from('machine_parts')
-        .select('machine_id, quantity')
-        .gte('created_at', twelveMonthsAgo.toISOString());
-
-      if (machinePartsData) {
-        const machineUsageMap = new Map<string, number>();
-        machinePartsData.forEach((part: any) => {
-          const current = machineUsageMap.get(part.machine_id) || 0;
-          machineUsageMap.set(part.machine_id, current + part.quantity);
-        });
-
-        // Count machines with 3+ parts that aren't dismissed and weren't recently serviced
-        const dismissedSet = new Set(
-          allDismissedAlerts.map(d => `${d.machine_id}_${d.problem_type}`)
-        );
-
-        machineUsageMap.forEach((partCount, machineId) => {
-          const alertKey = `${machineId}_parts_usage`;
-          const isDismissed = dismissedSet.has(alertKey);
-          const wasRecentlyServiced = recentlyServicedMachines.has(machineId);
-          
-          if (partCount >= 3 && !isDismissed && !wasRecentlyServiced) {
-            activeMachineProblems++;
-          }
-        });
-      }
-    } catch (error) {
-      console.warn('Error calculating machine problems for health score:', error);
-      // Fallback to estimating based on machines needing maintenance
-      activeMachineProblems = machines.filter(m => m.status === 'maintenance').length;
-    }
-
-    // Machine uptime impact (30% of score)
-    if (stats.machineUptime < 90) {
-      score -= (90 - stats.machineUptime) * 2;
-      issues.push(`${(100 - stats.machineUptime).toFixed(1)}% of machines need attention`);
-      improvements.push('Schedule maintenance for inactive machines');
-    }
-
-    // Stock management impact (25% of score)
-    if (stats.lowStockAlerts > 0) {
-      score -= Math.min(stats.lowStockAlerts * 3, 25);
-      issues.push(`${stats.lowStockAlerts} items with low stock`);
-      improvements.push('Restock low inventory items');
-    }
-
-    // Active machine problems impact (20% of score) - only count non-dismissed alerts
-    if (activeMachineProblems > 0) {
-      score -= Math.min(activeMachineProblems * 5, 20);
-      issues.push(`${activeMachineProblems} machines with high maintenance needs`);
-      improvements.push('Address machine problems or schedule maintenance');
-    }
-
-    // Pending issues impact (15% of score)
-    if (stats.pendingIssues > 0) {
-      score -= Math.min(stats.pendingIssues * 3, 15);
-      issues.push(`${stats.pendingIssues} pending maintenance jobs`);
-      improvements.push('Complete pending maintenance jobs');
-    }
-
-    // Payout optimization (10% of score)
-    if (stats.averagePayout > 30 || (stats.averagePayout > 0 && stats.averagePayout < 10)) {
-      score -= 10;
-      if (stats.averagePayout > 30) {
-        issues.push('Average payout too high (>30%)');
-        improvements.push('Adjust prize costs or claw settings');
-      } else if (stats.averagePayout < 10) {
-        issues.push('Average payout too low (<10%)');
-        improvements.push('Make games more rewarding');
-      }
-    }
-
-    // Revenue growth impact (5% of score)
-    if (stats.revenueGrowth < -10) {
-      score -= Math.min(Math.abs(stats.revenueGrowth) * 0.3, 5);
-      issues.push('Revenue declining significantly');
-      improvements.push('Analyze underperforming machines and venues');
-    }
-
-    score = Math.max(0, Math.min(100, score));
-
-    let status: BusinessHealth['status'] = 'excellent';
-    if (score < 70) status = 'critical';
-    else if (score < 80) status = 'warning';
-    else if (score < 90) status = 'good';
-
-    console.log('📊 Business health calculated:', {
-      score: score.toFixed(1),
-      activeMachineProblems,
-      issues: issues.length,
-      status
-    });
-
-    setBusinessHealth({ score, issues, improvements, status });
-  };
-
-  const handleQuickAction = (action: string) => {
-    switch (action) {
-      case 'add-prize':
-        setCurrentView('prizes');
-        break;
-      case 'add-part':
-        setCurrentView('parts');
-        break;
-      case 'add-machine':
-        setCurrentView('machines');
-        break;
-      case 'add-venue':
-        setCurrentView('venues');
-        break;
-      case 'add-equipment':
-        setCurrentView('equipment-hire');
-        break;
-      default:
-        toast({
-          title: 'Quick Action',
-          description: `${action} action coming soon!`,
-        });
-        break;
-    }
-  };
-
-  const getHealthColor = (status: BusinessHealth['status']) => {
-    switch (status) {
-      case 'excellent': return 'text-green-600';
-      case 'good': return 'text-blue-600';
-      case 'warning': return 'text-yellow-600';
-      case 'critical': return 'text-red-600';
-      default: return 'text-gray-600';
-    }
-  };
-
-  // FIXED: Always use white background regardless of status
-  const getHealthBackground = (status: BusinessHealth['status']) => {
-    return 'bg-white border-gray-200';
-  };
-
-  // Calculate basic stats
+  // Quick stats
   const activeMachines = machines.filter(m => m.status === 'active').length;
-  const totalPrizes = prizes.reduce((sum, prize) => sum + prize.stock_quantity, 0);
-  const totalParts = parts.reduce((sum, part) => sum + part.stock_quantity, 0);
-  const lowStockPrizes = prizes.filter(prize => prize.stock_quantity <= 5).length;
-  const lowStockParts = parts.filter(part => part.stock_quantity <= part.low_stock_limit).length;
-  const prizeValue = prizes.reduce((sum, prize) => sum + (prize.cost * prize.stock_quantity), 0);
-  const partValue = parts.reduce((sum, part) => sum + (part.cost_price * part.stock_quantity), 0);
+  const maintenanceMachines = machines.filter(m => m.status === 'maintenance').length;
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      // --- Outstanding Jobs ---
+      const { data: jobsData } = await supabase
+        .from('jobs')
+        .select('id, title, description, priority, status, due_date, machine_id, venue_id')
+        .in('status', ['pending', 'in-progress'])
+        .eq('archived', false)
+        .order('due_date', { ascending: true })
+        .limit(50);
+
+      if (jobsData && jobsData.length > 0) {
+        // Enrich with machine/venue names
+        const machineIds = [...new Set(jobsData.map(j => j.machine_id).filter(Boolean))];
+        const venueIds = [...new Set(jobsData.map(j => j.venue_id).filter(Boolean))];
+
+        const [{ data: machinesData }, { data: venuesData }] = await Promise.all([
+          machineIds.length > 0
+            ? supabase.from('machines').select('id, name').in('id', machineIds)
+            : { data: [] },
+          venueIds.length > 0
+            ? supabase.from('venues').select('id, name').in('id', venueIds)
+            : { data: [] },
+        ]);
+
+        const machineMap = Object.fromEntries((machinesData || []).map(m => [m.id, m.name]));
+        const venueMap = Object.fromEntries((venuesData || []).map(v => [v.id, v.name]));
+
+        setPendingJobs(
+          jobsData.map(j => ({
+            ...j,
+            machine_name: j.machine_id ? machineMap[j.machine_id] : undefined,
+            venue_name: j.venue_id ? venueMap[j.venue_id] : undefined,
+          }))
+        );
+      } else {
+        setPendingJobs([]);
+      }
+
+      // --- Top 10 Machines by token-adjusted earnings ---
+      // Formula: tokens_in_game × $0.83 + cash (display only)
+      const TOKEN_VALUE = 0.83;
+      const { data: machineRows } = await supabase
+        .from('machines')
+        .select('id, name, type, total_earnings, status, venue_id');
+
+      // Fetch token data from machine_reports to compute adjusted earnings
+      const { data: tokenReports } = await supabase
+        .from('machine_reports')
+        .select('machine_id, money_collected, tokens_in_game');
+
+      if (machineRows) {
+        const venueLookup = Object.fromEntries(venues.map(v => [v.id, v.name]));
+
+        // Build per-machine token-adjusted earnings map
+        const adjustedEarningsMap: Record<string, number> = {};
+        (tokenReports || []).forEach(r => {
+          const tokenVal = (r.tokens_in_game || 0) * TOKEN_VALUE;
+          const cash = r.money_collected || 0;
+          adjustedEarningsMap[r.machine_id] = (adjustedEarningsMap[r.machine_id] || 0) + cash + tokenVal;
+        });
+
+        const sorted = machineRows
+          .map(m => ({
+            ...m,
+            total_earnings: adjustedEarningsMap[m.id] ?? (m.total_earnings || 0),
+            venue_name: m.venue_id ? venueLookup[m.venue_id] : undefined,
+          }))
+          .sort((a, b) => b.total_earnings - a.total_earnings)
+          .slice(0, 10);
+
+        setTopMachines(sorted);
+      }
+
+      // --- Top 10 Venues by revenue (from machine_performance_summary) ---
+      const { data: venuePerf } = await supabase
+        .from('venue_performance_summary')
+        .select('venue_id, venue_name, total_revenue, total_machines')
+        .order('total_revenue', { ascending: false })
+        .limit(10);
+
+      if (venuePerf) {
+        setTopVenues(
+          venuePerf.map(v => ({
+            id: v.venue_id,
+            name: v.venue_name || 'Unknown',
+            total_revenue: v.total_revenue || 0,
+            total_machines: v.total_machines || 0,
+          }))
+        );
+      }
+
+      // --- Top 10 Prizes by total dispensed ---
+      const { data: reportData } = await supabase
+        .from('machine_reports')
+        .select('machine_id, toys_dispensed');
+
+      const { data: machineStockData } = await supabase
+        .from('machine_stock')
+        .select('machine_id, prize_id, quantity');
+
+      const { data: prizesData } = await supabase
+        .from('prizes')
+        .select('id, name, category, stock_quantity, cost_price');
+
+      if (prizesData && machineStockData) {
+        // Sum stock across machines per prize
+        const prizeStockMap: Record<string, number> = {};
+        machineStockData.forEach(row => {
+          prizeStockMap[row.prize_id] = (prizeStockMap[row.prize_id] || 0) + row.quantity;
+        });
+
+        const ranked = prizesData
+          .map(p => ({
+            id: p.id,
+            name: p.name,
+            category: p.category,
+            stock_quantity: p.stock_quantity || 0,
+            cost_price: p.cost_price,
+            total_dispensed: prizeStockMap[p.id] || 0,
+          }))
+          .sort((a, b) => b.total_dispensed - a.total_dispensed)
+          .slice(0, 10);
+
+        setTopPrizes(ranked);
+      }
+    } catch (err) {
+      console.error('Dashboard fetch error:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [venues]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Auto-rotate jobs every 5 seconds
+  useEffect(() => {
+    if (pendingJobs.length <= 1) return;
+    const interval = setInterval(() => {
+      setJobIndex(i => (i + 1) % pendingJobs.length);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [pendingJobs.length]);
+
+  const prevJob = () => setJobIndex(i => (i - 1 + pendingJobs.length) % pendingJobs.length);
+  const nextJob = () => setJobIndex(i => (i + 1) % pendingJobs.length);
+
+  const currentJob = pendingJobs[jobIndex];
+
+  const navigate = (view: string) => {
+    if (onNavigate) onNavigate(view);
+  };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-1">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-4xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-600 mt-2">Complete overview of your arcade business operations</p>
+          <h1 className="text-3xl font-bold text-gray-900">
+            {userProfile?.full_name ? `Welcome, ${userProfile.full_name.split(' ')[0]}` : 'Dashboard'}
+          </h1>
+          <p className="text-gray-500 mt-1 text-sm">
+            {new Date().toLocaleDateString('en-AU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </p>
         </div>
-        <div className="text-right text-sm text-gray-500">
-          Last updated: {new Date().toLocaleTimeString()}
-        </div>
+        <Button variant="outline" size="sm" onClick={fetchData} className="text-xs">
+          Refresh
+        </Button>
       </div>
 
-      {/* Business Health Score - FIXED: White background always */}
-      <Card className={`${getHealthBackground(businessHealth.status)} border-2`}>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
+      {/* Quick Stats Row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card
+          className="cursor-pointer hover:shadow-md transition-shadow border-l-4 border-l-blue-500"
+          onClick={() => navigate('venues')}
+        >
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Venues</p>
+                <p className="text-2xl font-bold text-gray-900">{venues.length}</p>
+              </div>
+              <Building2 className="h-8 w-8 text-blue-400 opacity-60" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card
+          className="cursor-pointer hover:shadow-md transition-shadow border-l-4 border-l-green-500"
+          onClick={() => navigate('machines')}
+        >
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Active Machines</p>
+                <p className="text-2xl font-bold text-gray-900">{activeMachines}</p>
+                {maintenanceMachines > 0 && (
+                  <p className="text-xs text-orange-500">{maintenanceMachines} in maintenance</p>
+                )}
+              </div>
+              <Cog className="h-8 w-8 text-green-400 opacity-60" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card
+          className={`cursor-pointer hover:shadow-md transition-shadow border-l-4 ${
+            pendingJobs.length > 0 ? 'border-l-orange-500' : 'border-l-gray-300'
+          }`}
+          onClick={() => navigate('jobs')}
+        >
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Open Jobs</p>
+                <p className="text-2xl font-bold text-gray-900">{pendingJobs.length}</p>
+                {pendingJobs.filter(j => j.priority === 'urgent').length > 0 && (
+                  <p className="text-xs text-red-500">
+                    {pendingJobs.filter(j => j.priority === 'urgent').length} urgent
+                  </p>
+                )}
+              </div>
+              <Wrench className="h-8 w-8 text-orange-400 opacity-60" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card
+          className={`cursor-pointer hover:shadow-md transition-shadow border-l-4 ${
+            maintenanceMachines > 0 ? 'border-l-red-400' : 'border-l-gray-300'
+          }`}
+          onClick={() => navigate('machines')}
+        >
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">Alerts</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {maintenanceMachines + pendingJobs.filter(j => j.priority === 'urgent').length}
+                </p>
+                <p className="text-xs text-gray-400">machines + urgent jobs</p>
+              </div>
+              <AlertTriangle className="h-8 w-8 text-red-400 opacity-60" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Outstanding Jobs Rotator */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Clock className="h-5 w-5 text-orange-500" />
+              Outstanding Jobs
+              {pendingJobs.length > 0 && (
+                <Badge variant="secondary" className="ml-1">{pendingJobs.length}</Badge>
+              )}
+            </CardTitle>
             <div className="flex items-center gap-2">
-              <Activity className="h-6 w-6" />
-              Business Health Score
+              {pendingJobs.length > 1 && (
+                <>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={prevJob}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-xs text-gray-400">
+                    {jobIndex + 1} / {pendingJobs.length}
+                  </span>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={nextJob}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => navigate('jobs')}
+              >
+                View All
+              </Button>
             </div>
-            <Badge className={`${
-              businessHealth.status === 'excellent' ? 'bg-green-500' :
-              businessHealth.status === 'good' ? 'bg-blue-500' :
-              businessHealth.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
-            } text-white text-lg px-3 py-1`}>
-              {businessHealth.status.toUpperCase()}
-            </Badge>
-          </CardTitle>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-center mb-6">
-            <div className="relative w-32 h-32">
-              <svg className="w-32 h-32 transform -rotate-90" viewBox="0 0 36 36">
-                <path
-                  d="m18,2.0845 a 15.9155,15.9155 0 0,1 0,31.831 a 15.9155,15.9155 0 0,1 0,-31.831"
-                  fill="none"
-                  stroke="#e5e7eb"
-                  strokeWidth="3"
-                />
-                <path
-                  d="m18,2.0845 a 15.9155,15.9155 0 0,1 0,31.831 a 15.9155,15.9155 0 0,1 0,-31.831"
-                  fill="none"
-                  stroke={
-                    businessHealth.status === 'excellent' ? '#10b981' :
-                    businessHealth.status === 'good' ? '#3b82f6' :
-                    businessHealth.status === 'warning' ? '#f59e0b' : '#ef4444'
-                  }
-                  strokeWidth="3"
-                  strokeDasharray={`${businessHealth.score}, 100`}
-                  className="transition-all duration-1000 ease-out"
-                />
-              </svg>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center">
-                  <div className={`text-3xl font-bold ${getHealthColor(businessHealth.status)}`}>
-                    {Math.round(businessHealth.score)}
+          {loading ? (
+            <div className="h-20 flex items-center justify-center text-gray-400 text-sm">
+              Loading jobs...
+            </div>
+          ) : pendingJobs.length === 0 ? (
+            <div className="h-20 flex flex-col items-center justify-center text-gray-400">
+              <Wrench className="h-8 w-8 mb-2 opacity-30" />
+              <p className="text-sm">No outstanding jobs — all clear! 🎉</p>
+            </div>
+          ) : currentJob ? (
+            <div
+              className={`rounded-lg border p-4 transition-all ${
+                PRIORITY_COLOR[currentJob.priority] || 'bg-gray-50 border-gray-200'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className="font-semibold text-sm truncate">{currentJob.title}</span>
+                    <Badge className={`text-xs capitalize ${STATUS_COLOR[currentJob.status] || ''}`}>
+                      {currentJob.status.replace('-', ' ')}
+                    </Badge>
+                    <Badge variant="outline" className="text-xs capitalize">
+                      {currentJob.priority}
+                    </Badge>
                   </div>
-                  <div className="text-sm text-gray-600">/ 100</div>
+                  {currentJob.description && (
+                    <p className="text-xs text-gray-600 line-clamp-2 mb-2">{currentJob.description}</p>
+                  )}
+                  <div className="flex items-center gap-3 flex-wrap text-xs text-gray-500">
+                    {currentJob.machine_name && (
+                      <span className="flex items-center gap-1">
+                        <Cog className="h-3 w-3" /> {currentJob.machine_name}
+                      </span>
+                    )}
+                    {currentJob.venue_name && (
+                      <span className="flex items-center gap-1">
+                        <MapPin className="h-3 w-3" /> {currentJob.venue_name}
+                      </span>
+                    )}
+                    {currentJob.due_date && (
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        Due: {new Date(currentJob.due_date).toLocaleDateString('en-AU')}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
+              {/* Progress dots */}
+              {pendingJobs.length > 1 && (
+                <div className="flex justify-center gap-1 mt-3">
+                  {pendingJobs.slice(0, Math.min(pendingJobs.length, 10)).map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setJobIndex(i)}
+                      className={`h-1.5 rounded-full transition-all ${
+                        i === jobIndex ? 'w-4 bg-current opacity-70' : 'w-1.5 bg-current opacity-20'
+                      }`}
+                    />
+                  ))}
+                  {pendingJobs.length > 10 && (
+                    <span className="text-xs opacity-40">+{pendingJobs.length - 10}</span>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
-          
-          {businessHealth.issues.length > 0 && (
-            <div className="mb-4">
-              <h4 className="font-semibold text-red-700 mb-2">Issues to Address:</h4>
-              <ul className="space-y-1">
-                {businessHealth.issues.map((issue, index) => (
-                  <li key={index} className="flex items-center gap-2 text-sm text-red-600">
-                    <AlertTriangle className="h-4 w-4" />
-                    {issue}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          
-          {businessHealth.improvements.length > 0 && (
-            <div>
-              <h4 className="font-semibold text-blue-700 mb-2">Recommended Actions:</h4>
-              <ul className="space-y-1">
-                {businessHealth.improvements.map((improvement, index) => (
-                  <li key={index} className="flex items-center gap-2 text-sm text-blue-600">
-                    <Target className="h-4 w-4" />
-                    {improvement}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          ) : null}
         </CardContent>
       </Card>
 
-      {/* Machine Problems Alert */}
-      <MachineProblemsTracker />
+      {/* Top 10 Tables Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-      {/* Key Performance Indicators */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Revenue (30 days)</CardTitle>
-            <DollarSign className="h-4 w-4 text-green-600" />
+        {/* Top 10 Machines */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Trophy className="h-5 w-5 text-yellow-500" />
+              Top 10 Machines
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">
-              ${dashboardStats.totalRevenue.toFixed(2)}
-            </div>
-            <div className="flex items-center text-xs mt-1">
-              {dashboardStats.revenueGrowth >= 0 ? (
-                <ArrowUp className="h-3 w-3 text-green-600 mr-1" />
-              ) : (
-                <ArrowDown className="h-3 w-3 text-red-600 mr-1" />
-              )}
-              <span className={dashboardStats.revenueGrowth >= 0 ? 'text-green-600' : 'text-red-600'}>
-                {Math.abs(dashboardStats.revenueGrowth).toFixed(1)}%
-              </span>
-              <span className="text-muted-foreground ml-1">vs last period</span>
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="py-8 text-center text-sm text-gray-400">Loading...</div>
+            ) : topMachines.length === 0 ? (
+              <div className="py-8 text-center text-sm text-gray-400">No data yet</div>
+            ) : (
+              <div className="divide-y">
+                {topMachines.map((machine, idx) => (
+                  <div key={machine.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+                    <span
+                      className={`text-xs font-bold w-5 text-center ${
+                        idx === 0 ? 'text-yellow-500' :
+                        idx === 1 ? 'text-gray-400' :
+                        idx === 2 ? 'text-amber-600' : 'text-gray-300'
+                      }`}
+                    >
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{machine.name}</p>
+                      {machine.venue_name && (
+                        <p className="text-xs text-gray-400 truncate">{machine.venue_name}</p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-green-600">
+                        ${machine.total_earnings.toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </p>
+                      <Badge
+                        variant={machine.status === 'active' ? 'default' : 'secondary'}
+                        className="text-xs"
+                      >
+                        {machine.status}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="px-4 py-2 border-t">
+              <Button variant="ghost" size="sm" className="w-full text-xs" onClick={() => navigate('machines')}>
+                View All Machines
+              </Button>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Machine Uptime</CardTitle>
-            <Activity className="h-4 w-4 text-blue-600" />
+        {/* Top 10 Venues */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <DollarSign className="h-5 w-5 text-green-500" />
+              Top 10 Venues
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">
-              {dashboardStats.machineUptime.toFixed(1)}%
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="py-8 text-center text-sm text-gray-400">Loading...</div>
+            ) : topVenues.length === 0 ? (
+              <div className="py-8 text-center text-sm text-gray-400">No data yet</div>
+            ) : (
+              <div className="divide-y">
+                {topVenues.map((venue, idx) => (
+                  <div key={venue.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+                    <span
+                      className={`text-xs font-bold w-5 text-center ${
+                        idx === 0 ? 'text-yellow-500' :
+                        idx === 1 ? 'text-gray-400' :
+                        idx === 2 ? 'text-amber-600' : 'text-gray-300'
+                      }`}
+                    >
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{venue.name}</p>
+                      <p className="text-xs text-gray-400">
+                        {venue.total_machines} machine{venue.total_machines !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                    <p className="text-sm font-semibold text-green-600">
+                      ${venue.total_revenue.toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="px-4 py-2 border-t">
+              <Button variant="ghost" size="sm" className="w-full text-xs" onClick={() => navigate('venues')}>
+                View All Venues
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {activeMachines} of {machines.length} machines active
-            </p>
           </CardContent>
         </Card>
 
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Average Payout</CardTitle>
-            <TrendingUp className="h-4 w-4 text-purple-600" />
+        {/* Top 10 Products */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Gift className="h-5 w-5 text-purple-500" />
+              Top 10 Products
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-purple-600">
-              {dashboardStats.averagePayout > 0 ? `${dashboardStats.averagePayout.toFixed(1)}%` : 'N/A'}
+          <CardContent className="p-0">
+            {loading ? (
+              <div className="py-8 text-center text-sm text-gray-400">Loading...</div>
+            ) : topPrizes.length === 0 ? (
+              <div className="py-8 text-center text-sm text-gray-400">No data yet</div>
+            ) : (
+              <div className="divide-y">
+                {topPrizes.map((prize, idx) => (
+                  <div key={prize.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+                    <span
+                      className={`text-xs font-bold w-5 text-center ${
+                        idx === 0 ? 'text-yellow-500' :
+                        idx === 1 ? 'text-gray-400' :
+                        idx === 2 ? 'text-amber-600' : 'text-gray-300'
+                      }`}
+                    >
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{prize.name}</p>
+                      {prize.category && (
+                        <p className="text-xs text-gray-400 truncate">{prize.category}</p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold text-purple-600">
+                        {prize.total_dispensed > 0 ? `${prize.total_dispensed} in machines` : 'Not stocked'}
+                      </p>
+                      {prize.stock_quantity <= 5 && (
+                        <Badge variant="destructive" className="text-xs">
+                          Low stock
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="px-4 py-2 border-t">
+              <Button variant="ghost" size="sm" className="w-full text-xs" onClick={() => navigate('prizes')}>
+                View All Prizes
+              </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Target: 10-30%
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Alerts</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-orange-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">
-              {dashboardStats.lowStockAlerts}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Stock & maintenance alerts
-            </p>
           </CardContent>
         </Card>
       </div>
-
-      {/* Operational Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Venues</CardTitle>
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{venues.length}</div>
-            <p className="text-xs text-muted-foreground">Active locations</p>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Machines</CardTitle>
-            <Cog className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{activeMachines}</div>
-            <p className="text-xs text-muted-foreground">
-              {machines.length} total, {machines.filter(m => m.status === 'maintenance').length} in maintenance
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Prize Inventory</CardTitle>
-            <Gift className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalPrizes}</div>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-xs text-muted-foreground">
-                ${prizeValue.toFixed(0)} value
-              </p>
-              {lowStockPrizes > 0 && (
-                <Badge variant="destructive" className="text-xs">
-                  {lowStockPrizes} low
-                </Badge>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Parts Inventory</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalParts}</div>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-xs text-muted-foreground">
-                ${partValue.toFixed(0)} value
-              </p>
-              {lowStockParts > 0 && (
-                <Badge variant="destructive" className="text-xs">
-                  {lowStockParts} low
-                </Badge>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Equipment Hire Card */}
-        <Card className="hover:shadow-lg transition-shadow">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Equipment Hire</CardTitle>
-            <Truck className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{equipmentStats.totalEquipment}</div>
-            <div className="flex items-center gap-2 mt-1">
-              <p className="text-xs text-muted-foreground">
-                ${equipmentStats.totalValue.toFixed(0)} value
-              </p>
-              <Badge variant={equipmentStats.hiredEquipment > 0 ? "default" : "secondary"} className="text-xs">
-                {equipmentStats.hiredEquipment} hired
-              </Badge>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Quick Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5" />
-            Quick Actions
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <Button
-              onClick={() => handleQuickAction('add-prize')}
-              className="h-20 flex-col bg-purple-600 hover:bg-purple-700 text-white"
-            >
-              <Gift className="h-6 w-6 mb-2" />
-              <div className="text-center">
-                <div className="font-medium">Add Prize</div>
-                <div className="text-xs opacity-90">Restock inventory</div>
-              </div>
-            </Button>
-            <Button
-              onClick={() => handleQuickAction('add-part')}
-              className="h-20 flex-col bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              <Package className="h-6 w-6 mb-2" />
-              <div className="text-center">
-                <div className="font-medium">Add Part</div>
-                <div className="text-xs opacity-90">Maintenance stock</div>
-              </div>
-            </Button>
-            <Button
-              onClick={() => handleQuickAction('add-machine')}
-              className="h-20 flex-col bg-green-600 hover:bg-green-700 text-white"
-            >
-              <Cog className="h-6 w-6 mb-2" />
-              <div className="text-center">
-                <div className="font-medium">Add Machine</div>
-                <div className="text-xs opacity-90">Expand fleet</div>
-              </div>
-            </Button>
-            <Button
-              onClick={() => handleQuickAction('add-venue')}
-              className="h-20 flex-col bg-orange-600 hover:bg-orange-700 text-white"
-            >
-              <Building2 className="h-6 w-6 mb-2" />
-              <div className="text-center">
-                <div className="font-medium">Add Venue</div>
-                <div className="text-xs opacity-90">New location</div>
-              </div>
-            </Button>
-            <Button
-              onClick={() => handleQuickAction('add-equipment')}
-              className="h-20 flex-col bg-indigo-600 hover:bg-indigo-700 text-white"
-            >
-              <Truck className="h-6 w-6 mb-2" />
-              <div className="text-center">
-                <div className="font-medium">Add Equipment</div>
-                <div className="text-xs opacity-90">Track assets</div>
-              </div>
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Recent Activity */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Calendar className="h-5 w-5" />
-            System Status Overview
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-3">
-              <h4 className="font-semibold text-green-700">Performing Well</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Active Machines</span>
-                  <Badge variant="default">{activeMachines}</Badge>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Total Venues</span>
-                  <Badge variant="default">{venues.length}</Badge>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Jobs Completed</span>
-                  <Badge variant="default">{dashboardStats.completedJobs}</Badge>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Available Equipment</span>
-                  <Badge variant="default">{equipmentStats.availableEquipment}</Badge>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <h4 className="font-semibold text-yellow-700">Needs Attention</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Maintenance Queue</span>
-                  <Badge variant="secondary">{machines.filter(m => m.status === 'maintenance').length}</Badge>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Pending Issues</span>
-                  <Badge variant="secondary">{dashboardStats.pendingIssues}</Badge>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Low Stock Items</span>
-                  <Badge variant="secondary">{lowStockPrizes + lowStockParts}</Badge>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Equipment on Hire</span>
-                  <Badge variant="secondary">{equipmentStats.hiredEquipment}</Badge>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <h4 className="font-semibold text-red-700">Critical</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Inactive Machines</span>
-                  <Badge variant="destructive">{machines.filter(m => m.status === 'inactive').length}</Badge>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Critical Stock</span>
-                  <Badge variant="destructive">{prizes.filter(p => p.stock_quantity === 0).length}</Badge>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Urgent Jobs</span>
-                  <Badge variant="destructive">
-                    {/* This would need to be calculated from jobs with urgent priority */}
-                    0
-                  </Badge>
-                </div>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 };

@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, Search, QrCode, Edit, Trash2, Eye, Calendar, AlertTriangle } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import AutoBarcodeScanner from '@/components/AutoBarcodeScanner';
-import MachineEditDialog from '@/components/MachineEditDialog';
+import { MachineEditDialog } from "./MachineEditDialog";
 import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
 import MachineProfile from '@/components/MachineProfile';
 import PayoutCalculator from '@/components/PayoutCalculator';

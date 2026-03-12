@@ -407,7 +407,8 @@ export const useAuth = () => {
       'map': 'view_venues',
       'parts': 'manage_stock',
       'equipment-hire': 'view_equipment',
-      'runs': 'view_venues' // NEW: Runs accessible to anyone who can view venues
+      'runs': 'view_venues', // NEW: Runs accessible to anyone who can view venues
+      'machine-moves': 'view_machines', // or any permission you want for this page
     };
   
     const requiredPermission = viewPermissions[view];

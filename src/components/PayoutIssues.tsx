@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAppContext } from '@/contexts/AppContext';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, RefreshCw, CheckCircle, Home } from 'lucide-react';
+import { AlertTriangle, RefreshCw, CheckCircle, Home, TrendingDown, TrendingUp, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 
@@ -23,6 +24,8 @@ const PayoutIssues: React.FC = () => {
   const [issues, setIssues] = useState<PayoutIssue[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [filterType, setFilterType] = useState<'all' | 'too_low' | 'too_high'>('all');
+  const [filterVenue, setFilterVenue] = useState<string>('all');
 
   const handleBackToDashboard = () => {
     navigate('/');
@@ -125,6 +128,20 @@ const PayoutIssues: React.FC = () => {
     }
   }, [machines]);
 
+  // Unique venues from issues for the venue filter
+  const venueOptions = useMemo(() => {
+    const names = [...new Set(issues.map(i => i.venue))].sort();
+    return names;
+  }, [issues]);
+
+  const filteredIssues = useMemo(() => {
+    return issues.filter(issue => {
+      const typeMatch = filterType === 'all' || issue.issue === filterType;
+      const venueMatch = filterVenue === 'all' || issue.venue === filterVenue;
+      return typeMatch && venueMatch;
+    });
+  }, [issues, filterType, filterVenue]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -183,41 +200,119 @@ const PayoutIssues: React.FC = () => {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4">
-          {issues.map((issue, index) => (
-            <Card key={index} className="border-l-4 border-l-red-500">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-red-500" />
-                    {issue.machineName}
-                  </CardTitle>
-                  <Badge variant={issue.issue === 'too_low' ? 'destructive' : 'secondary'}>
-                    {issue.issue === 'too_low' ? 'Too Low' : 'Too High'}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <p className="text-sm text-gray-600">
-                    <strong>Venue:</strong> {issue.venue}
-                  </p>
-                  <p className="text-sm text-gray-600">
-                    <strong>Current Payout:</strong> {issue.currentPayout.toFixed(1)}%
-                  </p>
-                  <p className="text-sm text-red-600">
-                    {issue.description}
-                  </p>
-                  <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
-                    <p className="text-sm text-yellow-800">
-                      <strong>Recommendation:</strong> Check prize value, toy size, games per win setting, claw voltage and claw size
-                    </p>
-                  </div>
-                </div>
+        <>
+          {/* Filter bar */}
+          <div className="flex flex-wrap items-center gap-3 p-4 bg-gray-50 border rounded-lg">
+            <Filter className="h-4 w-4 text-gray-500 shrink-0" />
+            <span className="text-sm font-medium text-gray-600">Filter:</span>
+
+            {/* Issue type buttons */}
+            <div className="flex gap-2">
+              {(['all', 'too_low', 'too_high'] as const).map(type => (
+                <Button
+                  key={type}
+                  size="sm"
+                  variant={filterType === type ? 'default' : 'outline'}
+                  onClick={() => setFilterType(type)}
+                  className={
+                    filterType === type
+                      ? type === 'too_low' ? 'bg-blue-600 hover:bg-blue-700' : type === 'too_high' ? 'bg-red-600 hover:bg-red-700' : ''
+                      : ''
+                  }
+                >
+                  {type === 'all' && `All (${issues.length})`}
+                  {type === 'too_low' && (
+                    <><TrendingDown className="h-3.5 w-3.5 mr-1" />Too Low ({issues.filter(i => i.issue === 'too_low').length})</>
+                  )}
+                  {type === 'too_high' && (
+                    <><TrendingUp className="h-3.5 w-3.5 mr-1" />Too High ({issues.filter(i => i.issue === 'too_high').length})</>
+                  )}
+                </Button>
+              ))}
+            </div>
+
+            {/* Venue filter */}
+            {venueOptions.length > 1 && (
+              <Select value={filterVenue} onValueChange={setFilterVenue}>
+                <SelectTrigger className="w-48 h-8 text-sm">
+                  <SelectValue placeholder="All venues" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All venues</SelectItem>
+                  {venueOptions.map(v => (
+                    <SelectItem key={v} value={v}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            {(filterType !== 'all' || filterVenue !== 'all') && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-gray-500 text-xs"
+                onClick={() => { setFilterType('all'); setFilterVenue('all'); }}
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
+
+          {filteredIssues.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center">
+                <p className="text-gray-500">No issues match the current filters.</p>
               </CardContent>
             </Card>
-          ))}
-        </div>
+          ) : (
+            <div className="grid gap-4">
+              {filteredIssues.map((issue, index) => (
+                <Card
+                  key={index}
+                  className={`border-l-4 ${issue.issue === 'too_low' ? 'border-l-blue-500' : 'border-l-red-500'}`}
+                >
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="flex items-center gap-2">
+                        <AlertTriangle className={`h-5 w-5 ${issue.issue === 'too_low' ? 'text-blue-500' : 'text-red-500'}`} />
+                        {issue.machineName}
+                      </CardTitle>
+                      <Badge
+                        className={issue.issue === 'too_low'
+                          ? 'bg-blue-100 text-blue-800 border-blue-200'
+                          : 'bg-red-100 text-red-800 border-red-200'}
+                      >
+                        {issue.issue === 'too_low'
+                          ? <><TrendingDown className="h-3 w-3 mr-1 inline" />Too Low</>
+                          : <><TrendingUp className="h-3 w-3 mr-1 inline" />Too High</>}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      <p className="text-sm text-gray-600"><strong>Venue:</strong> {issue.venue}</p>
+                      <p className="text-sm text-gray-600">
+                        <strong>Current Payout:</strong>{' '}
+                        <span className={`font-semibold ${issue.issue === 'too_low' ? 'text-blue-700' : 'text-red-700'}`}>
+                          {issue.currentPayout.toFixed(1)}%
+                        </span>
+                        <span className="text-gray-400 ml-2">(target: 10–30%)</span>
+                      </p>
+                      <p className={`text-sm ${issue.issue === 'too_low' ? 'text-blue-700' : 'text-red-700'}`}>
+                        {issue.description}
+                      </p>
+                      <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                        <p className="text-sm text-yellow-800">
+                          <strong>Recommendation:</strong> Check prize value, toy size, games per win setting, claw voltage and claw size
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

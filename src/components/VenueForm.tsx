@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAppContext } from '@/contexts/AppContext';
 import ImageUpload from '@/components/ImageUpload';
+import { loadGoogleMaps } from '@/lib/googleMaps';
 
 const VenueForm: React.FC = () => {
   const { addVenue } = useAppContext();
@@ -14,9 +15,73 @@ const VenueForm: React.FC = () => {
     contact_person: '',
     phone: '',
     image_url: '',
-    commission_percentage: ''
+    commission_percentage: '',
+    latitude: null as number | null,
+    longitude: null as number | null,
   });
   const [loading, setLoading] = useState(false);
+
+  // Google Maps autocomplete
+  const addressInputRef = useRef<HTMLInputElement>(null);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  const [mapsReady, setMapsReady] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    loadGoogleMaps()
+      .then(() => {
+        if (mounted) setMapsReady(true);
+      })
+      .catch((err) => console.warn('Google Maps failed to load:', err));
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!mapsReady || !addressInputRef.current) return;
+
+    // Destroy any existing instance first
+    if (autocompleteRef.current) {
+      google.maps.event.clearInstanceListeners(autocompleteRef.current);
+    }
+
+    const autocomplete = new google.maps.places.Autocomplete(addressInputRef.current, {
+      componentRestrictions: { country: 'au' },
+      fields: ['formatted_address', 'geometry'],
+      types: ['address'],
+    });
+
+    autocomplete.addListener('place_changed', () => {
+      const place = autocomplete.getPlace();
+      if (place.formatted_address) {
+        setFormData(prev => ({
+          ...prev,
+          address: place.formatted_address!,
+          latitude: place.geometry?.location?.lat() ?? null,
+          longitude: place.geometry?.location?.lng() ?? null,
+        }));
+      }
+    });
+
+    autocompleteRef.current = autocomplete;
+
+    return () => {
+      if (autocompleteRef.current) {
+        google.maps.event.clearInstanceListeners(autocompleteRef.current);
+      }
+    };
+  }, [mapsReady]);
+
+  // Close the pac-container dropdown when user clicks away from the address field
+  // This fixes the "stuck popup" bug where the dropdown blocks other fields
+  const handleAddressBlur = () => {
+    // Small delay so place_changed fires before we close
+    setTimeout(() => {
+      const pacContainers = document.querySelectorAll<HTMLElement>('.pac-container');
+      pacContainers.forEach(el => {
+        el.style.display = 'none';
+      });
+    }, 200);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,10 +90,25 @@ const VenueForm: React.FC = () => {
     setLoading(true);
     try {
       await addVenue({
-        ...formData,
-        commission_percentage: parseFloat(formData.commission_percentage) || 0
+        name: formData.name,
+        address: formData.address,
+        contact_person: formData.contact_person,
+        phone: formData.phone,
+        image_url: formData.image_url,
+        commission_percentage: parseFloat(formData.commission_percentage) || 0,
+        latitude: formData.latitude,
+        longitude: formData.longitude,
       });
-      setFormData({ name: '', address: '', contact_person: '', phone: '', image_url: '', commission_percentage: '' });
+      setFormData({
+        name: '',
+        address: '',
+        contact_person: '',
+        phone: '',
+        image_url: '',
+        commission_percentage: '',
+        latitude: null,
+        longitude: null,
+      });
     } catch (error) {
       console.error('Error adding venue:', error);
     } finally {
@@ -57,15 +137,26 @@ const VenueForm: React.FC = () => {
               required
             />
           </div>
+
+          {/* Address with Google Maps autocomplete */}
           <div>
             <Label htmlFor="address">Address</Label>
             <Input
               id="address"
+              ref={addressInputRef}
               value={formData.address}
               onChange={(e) => handleChange('address', e.target.value)}
-              placeholder="Enter address"
+              onBlur={handleAddressBlur}
+              placeholder={mapsReady ? 'Start typing an address…' : 'Enter address'}
+              autoComplete="off"
             />
+            {formData.latitude && formData.longitude && (
+              <p className="text-xs text-green-600 mt-1">
+                📍 Location saved ({formData.latitude.toFixed(4)}, {formData.longitude.toFixed(4)})
+              </p>
+            )}
           </div>
+
           <div>
             <Label htmlFor="contact">Contact Person</Label>
             <Input

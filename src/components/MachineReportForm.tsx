@@ -4,10 +4,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 import { useAppContext } from '@/contexts/AppContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
-import { Calculator } from 'lucide-react';
+import { Calculator, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import MachineSelectInput from './MachineSelectInput';
 
 const MachineReportForm: React.FC = () => {
@@ -40,7 +41,6 @@ const MachineReportForm: React.FC = () => {
 
   const fetchLastToyCount = async (machineId: string) => {
     try {
-      // Try machine_reports first
       let { data, error } = await supabase
         .from('machine_reports')
         .select('current_toy_count')
@@ -48,7 +48,6 @@ const MachineReportForm: React.FC = () => {
         .order('created_at', { ascending: false })
         .limit(1);
 
-      // If no data from machine_reports, try reports table
       if (!data || data.length === 0) {
         const { data: reportsData, error: reportsError } = await supabase
           .from('reports')
@@ -79,11 +78,7 @@ const MachineReportForm: React.FC = () => {
   const calculatePrizeValue = (): number => {
     const toysDispensed = calculatedToys || 0;
     const machine = machines.find(m => m.id === selectedMachine);
-
-    if (!machine?.current_prize || toysDispensed === 0) {
-      return 0;
-    }
-
+    if (!machine?.current_prize || toysDispensed === 0) return 0;
     return toysDispensed * parseFloat(machine.current_prize.cost.toString());
   };
 
@@ -101,7 +96,6 @@ const MachineReportForm: React.FC = () => {
     const prizeValue = calculatePrizeValue();
     const toysDispensed = calculatedToys || 0;
 
-    // Create report data with only the columns that exist
     const reportData = {
       machine_id: selectedMachine,
       money_collected: parseFloat(moneyCollected) || 0,
@@ -112,60 +106,48 @@ const MachineReportForm: React.FC = () => {
       report_date: new Date().toISOString().split('T')[0]
     };
 
-    // Add optional fields only if they have values
     if (tokensInGame) {
       (reportData as any).tokens_in_game = parseInt(tokensInGame);
     }
-
     if (notes.trim()) {
       (reportData as any).notes = notes.trim();
     }
 
     setLoading(true);
     try {
-      console.log('Submitting report data:', reportData);
-
       const { data, error } = await supabase
         .from('machine_reports')
         .insert([reportData])
         .select();
 
-      if (error) {
-        console.error('Supabase error:', error);
-        throw new Error(`Database error: ${error.message}`);
-      }
+      if (error) throw new Error(`Database error: ${error.message}`);
 
-      console.log('Report created successfully:', data);
-
-      // Also create entry in main reports table for better analytics
       try {
+        const machine = machines.find(m => m.id === selectedMachine);
         const mainReportData = {
           machine_id: selectedMachine,
-          venue_id: machines.find(m => m.id === selectedMachine)?.venue_id,
+          venue_id: machine?.venue_id,
           revenue: parseFloat(moneyCollected) || 0,
           toy_counter_reading: parseInt(currentToyCount) || 0,
           toys_dispensed: toysDispensed,
           tokens_in_game: parseFloat(tokensInGame) || 0,
-          commission_rate: machines.find(m => m.id === selectedMachine)?.venue?.commission_percentage || 30,
-          commission_amount: (parseFloat(moneyCollected) || 0) * ((machines.find(m => m.id === selectedMachine)?.venue?.commission_percentage || 30) / 100),
-          net_revenue: (parseFloat(moneyCollected) || 0) * (1 - ((machines.find(m => m.id === selectedMachine)?.venue?.commission_percentage || 30) / 100)),
+          commission_rate: machine?.venue?.commission_percentage || 30,
+          commission_amount: (parseFloat(moneyCollected) || 0) * ((machine?.venue?.commission_percentage || 30) / 100),
+          net_revenue: (parseFloat(moneyCollected) || 0) * (1 - ((machine?.venue?.commission_percentage || 30) / 100)),
           payout_percentage: moneyCollected ? (prizeValue / parseFloat(moneyCollected) * 100) : 0,
           report_date: new Date().toISOString().split('T')[0],
           notes: notes.trim() || null
         };
-
         await supabase.from('reports').insert([mainReportData]);
       } catch (mainReportError) {
         console.warn('Failed to create main report entry:', mainReportError);
-        // Don't fail the whole operation if this fails
       }
 
       toast({
-        title: 'Success',
-        description: `Report created! Toys dispensed: ${toysDispensed}, Prize value: $${prizeValue.toFixed(2)}`
+        title: 'Report Created',
+        description: `Toys dispensed: ${toysDispensed}, Prize value: $${prizeValue.toFixed(2)}`
       });
 
-      // Reset form
       setSelectedMachine('');
       setTokensInGame('');
       setMoneyCollected('');
@@ -176,7 +158,6 @@ const MachineReportForm: React.FC = () => {
 
       await refreshData();
     } catch (error: any) {
-      console.error('Error creating report:', error);
       toast({
         title: 'Error',
         description: error.message || 'Failed to create report',
@@ -189,8 +170,20 @@ const MachineReportForm: React.FC = () => {
 
   const selectedMachineData = machines.find(m => m.id === selectedMachine);
   const prizeValue = calculatePrizeValue();
-  const projectedPayout = moneyCollected && prizeValue > 0 ?
-    ((prizeValue / parseFloat(moneyCollected)) * 100).toFixed(1) : null;
+  const money = parseFloat(moneyCollected) || 0;
+
+  // Payout % = prize value / money collected × 100
+  const payoutPct = money > 0 && prizeValue > 0 ? (prizeValue / money) * 100 : null;
+
+  // COGS = prize cost per unit × toys dispensed (same as prizeValue)
+  const cogs = prizeValue;
+
+  // Determine payout health
+  const getPayoutStatus = (pct: number) => {
+    if (pct < 10) return { label: 'Low', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: TrendingDown };
+    if (pct <= 30) return { label: 'Good', color: 'bg-green-100 text-green-700 border-green-200', icon: TrendingUp };
+    return { label: 'High', color: 'bg-red-100 text-red-700 border-red-200', icon: TrendingUp };
+  };
 
   return (
     <Card>
@@ -202,6 +195,7 @@ const MachineReportForm: React.FC = () => {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Machine Selection */}
           <div className="space-y-2">
             <MachineSelectInput
               value={selectedMachine}
@@ -218,6 +212,7 @@ const MachineReportForm: React.FC = () => {
             )}
           </div>
 
+          {/* Toy Counter */}
           <div className="space-y-2">
             <Label className="font-semibold text-lg">Current Toy Counter Reading *</Label>
             <Input
@@ -237,15 +232,11 @@ const MachineReportForm: React.FC = () => {
                 <p className="text-sm font-semibold text-blue-800">
                   🎁 Toys dispensed: {calculatedToys}
                 </p>
-                {prizeValue > 0 && (
-                  <p className="text-sm font-semibold text-green-800">
-                    💰 Prize value dispensed: ${prizeValue.toFixed(2)}
-                  </p>
-                )}
               </div>
             )}
           </div>
 
+          {/* Money Collected */}
           <div className="space-y-2">
             <Label className="font-semibold text-lg">Money Collected ($) *</Label>
             <Input
@@ -258,15 +249,69 @@ const MachineReportForm: React.FC = () => {
               className="text-lg font-semibold"
               required
             />
-            {projectedPayout && (
-              <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-sm font-semibold text-green-800">
-                  📊 Projected Payout %: {projectedPayout}%
-                </p>
-              </div>
-            )}
           </div>
 
+          {/* Payout % and COGS summary box — shown as soon as we have enough data */}
+          {money > 0 && calculatedToys !== null && (
+            <div className="rounded-lg border border-gray-200 overflow-hidden">
+              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Report Summary</p>
+              </div>
+              <div className="grid grid-cols-2 divide-x divide-gray-200">
+                {/* Payout % */}
+                <div className="p-4">
+                  <p className="text-xs text-gray-500 mb-1">Payout %</p>
+                  {payoutPct !== null ? (
+                    <>
+                      <p className="text-2xl font-bold text-gray-900">{payoutPct.toFixed(1)}%</p>
+                      <div className="mt-1">
+                        {(() => {
+                          const status = getPayoutStatus(payoutPct);
+                          const Icon = status.icon;
+                          return (
+                            <Badge className={`text-xs ${status.color} border`}>
+                              <Icon className="h-3 w-3 mr-1" />
+                              {status.label} · Target: 10–30%
+                            </Badge>
+                          );
+                        })()}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-400">No prize data</p>
+                  )}
+                </div>
+
+                {/* COGS */}
+                <div className="p-4">
+                  <p className="text-xs text-gray-500 mb-1">COGS (Prize Cost)</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    ${cogs > 0 ? cogs.toFixed(2) : '0.00'}
+                  </p>
+                  {cogs > 0 && money > 0 && (
+                    <p className="text-xs text-gray-400 mt-1">
+                      {((cogs / money) * 100).toFixed(1)}% of revenue
+                    </p>
+                  )}
+                  {cogs === 0 && calculatedToys > 0 && (
+                    <p className="text-xs text-gray-400 mt-1">No prize assigned</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Net after COGS row */}
+              {cogs > 0 && (
+                <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 flex justify-between items-center">
+                  <span className="text-sm text-gray-600">Net Revenue (after COGS)</span>
+                  <span className="text-sm font-semibold text-green-700">
+                    ${(money - cogs).toFixed(2)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tokens in Game */}
           <div className="space-y-2">
             <Label className="font-semibold text-lg">Tokens in Game</Label>
             <Input
@@ -278,6 +323,7 @@ const MachineReportForm: React.FC = () => {
             />
           </div>
 
+          {/* Notes */}
           <div className="space-y-2">
             <Label className="font-semibold">Notes (Optional)</Label>
             <Textarea

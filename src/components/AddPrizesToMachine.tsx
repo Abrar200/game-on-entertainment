@@ -117,7 +117,7 @@ const AddPrizesToMachine: React.FC<AddPrizesToMachineProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-red-800 flex items-center gap-2">
             <Gift className="h-5 w-5" />
@@ -134,7 +134,14 @@ const AddPrizesToMachine: React.FC<AddPrizesToMachineProps> = ({
                 id="search"
                 type="text"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  // Clear selection when user starts typing a new search
+                  const selectedPrize = prizes.find(p => p.id === selectedPrizeId);
+                  if (selectedPrize && e.target.value !== selectedPrize.name) {
+                    setSelectedPrizeId('');
+                  }
+                }}
                 placeholder="Search by name or barcode..."
                 className="pl-10 pr-10 border-red-300 focus:border-red-500"
               />
@@ -152,7 +159,7 @@ const AddPrizesToMachine: React.FC<AddPrizesToMachineProps> = ({
             </div>
             
             {/* Search Results Dropdown */}
-            {searchTerm && filteredPrizes.length > 0 && !selectedPrizeId && (
+            {searchTerm && filteredPrizes.length > 0 && (
               <div className="mt-2 max-h-40 overflow-y-auto border border-red-300 rounded-lg bg-white shadow-lg">
                 {filteredPrizes.slice(0, 5).map(prize => (
                   <button

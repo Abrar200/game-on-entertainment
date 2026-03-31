@@ -127,22 +127,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile }) => {
         setPendingJobs([]);
       }
 
-      // --- Top 10 Machines by token-adjusted earnings ---
-      // Formula: tokens_in_game × $0.83 + cash (display only)
+      // --- Last 30 days date cutoff ---
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const cutoff = thirtyDaysAgo.toISOString().split('T')[0];
+
+      // --- Top 10 Machines — last 30 days token-adjusted earnings ---
       const TOKEN_VALUE = 0.83;
       const { data: machineRows } = await supabase
         .from('machines')
-        .select('id, name, type, total_earnings, status, venue_id');
+        .select('id, name, type, status, venue_id');
 
-      // Fetch token data from machine_reports to compute adjusted earnings
       const { data: tokenReports } = await supabase
         .from('machine_reports')
-        .select('machine_id, money_collected, tokens_in_game');
+        .select('machine_id, money_collected, tokens_in_game')
+        .gte('report_date', cutoff);
 
       if (machineRows) {
         const venueLookup = Object.fromEntries(venues.map(v => [v.id, v.name]));
 
-        // Build per-machine token-adjusted earnings map
         const adjustedEarningsMap: Record<string, number> = {};
         (tokenReports || []).forEach(r => {
           const tokenVal = (r.tokens_in_game || 0) * TOKEN_VALUE;
@@ -153,52 +156,82 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile }) => {
         const sorted = machineRows
           .map(m => ({
             ...m,
-            total_earnings: adjustedEarningsMap[m.id] ?? (m.total_earnings || 0),
+            total_earnings: adjustedEarningsMap[m.id] || 0,
             venue_name: m.venue_id ? venueLookup[m.venue_id] : undefined,
           }))
+          .filter(m => m.total_earnings > 0)
           .sort((a, b) => b.total_earnings - a.total_earnings)
           .slice(0, 10);
 
         setTopMachines(sorted);
       }
 
-      // --- Top 10 Venues by revenue (from machine_performance_summary) ---
-      const { data: venuePerf } = await supabase
-        .from('venue_performance_summary')
-        .select('venue_id, venue_name, total_revenue, total_machines')
-        .order('total_revenue', { ascending: false })
-        .limit(10);
+      // --- Top 10 Venues — last 30 days revenue from machine_reports ---
+      const { data: venueReportRows } = await supabase
+        .from('machine_reports')
+        .select('machine_id, money_collected, tokens_in_game')
+        .gte('report_date', cutoff);
 
-      if (venuePerf) {
-        setTopVenues(
-          venuePerf.map(v => ({
-            id: v.venue_id,
-            name: v.venue_name || 'Unknown',
-            total_revenue: v.total_revenue || 0,
-            total_machines: v.total_machines || 0,
+      if (venueReportRows && machineRows) {
+        const venueLookup = Object.fromEntries(venues.map(v => [v.id, v.name]));
+        const machineVenueMap = Object.fromEntries(machineRows.map(m => [m.id, m.venue_id]));
+        const venueMachineCount: Record<string, Set<string>> = {};
+        const venueRevenueMap: Record<string, number> = {};
+
+        venueReportRows.forEach(r => {
+          const venueId = machineVenueMap[r.machine_id];
+          if (!venueId) return;
+          const earnings = (r.money_collected || 0) + ((r.tokens_in_game || 0) * TOKEN_VALUE);
+          venueRevenueMap[venueId] = (venueRevenueMap[venueId] || 0) + earnings;
+          if (!venueMachineCount[venueId]) venueMachineCount[venueId] = new Set();
+          venueMachineCount[venueId].add(r.machine_id);
+        });
+
+        const topVenueList = Object.entries(venueRevenueMap)
+          .map(([id, revenue]) => ({
+            id,
+            name: venueLookup[id] || 'Unknown',
+            total_revenue: revenue,
+            total_machines: venueMachineCount[id]?.size || 0,
           }))
-        );
+          .sort((a, b) => b.total_revenue - a.total_revenue)
+          .slice(0, 10);
+
+        setTopVenues(topVenueList);
       }
 
-      // --- Top 10 Prizes by total dispensed ---
-      const { data: reportData } = await supabase
-        .from('machine_reports')
-        .select('machine_id, toys_dispensed');
-
-      const { data: machineStockData } = await supabase
-        .from('machine_stock')
-        .select('machine_id, prize_id, quantity');
-
+      // --- Top 10 Prizes — added to machines in last 30 days via stock_movements ---
       const { data: prizesData } = await supabase
         .from('prizes')
         .select('id, name, category, stock_quantity, cost_price');
 
-      if (prizesData && machineStockData) {
-        // Sum stock across machines per prize
-        const prizeStockMap: Record<string, number> = {};
-        machineStockData.forEach(row => {
-          prizeStockMap[row.prize_id] = (prizeStockMap[row.prize_id] || 0) + row.quantity;
+      const { data: recentMovements } = await supabase
+        .from('stock_movements')
+        .select('prize_id, quantity_change')
+        .gte('created_at', thirtyDaysAgo.toISOString())
+        .gt('quantity_change', 0);
+
+      if (prizesData) {
+        // Build 30-day added quantity map from stock_movements
+        const prizeAddedMap: Record<string, number> = {};
+        (recentMovements || []).forEach(row => {
+          if (row.prize_id) {
+            prizeAddedMap[row.prize_id] = (prizeAddedMap[row.prize_id] || 0) + (row.quantity_change || 0);
+          }
         });
+
+        // Fallback: if no stock_movements data, use current machine_stock quantities
+        const hasMovements = (recentMovements || []).length > 0;
+        let prizeStockMap: Record<string, number> = prizeAddedMap;
+
+        if (!hasMovements) {
+          const { data: machineStockData } = await supabase
+            .from('machine_stock')
+            .select('prize_id, quantity');
+          (machineStockData || []).forEach(row => {
+            prizeStockMap[row.prize_id] = (prizeStockMap[row.prize_id] || 0) + row.quantity;
+          });
+        }
 
         const ranked = prizesData
           .map(p => ({
@@ -455,6 +488,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile }) => {
             <CardTitle className="flex items-center gap-2 text-base">
               <Trophy className="h-5 w-5 text-yellow-500" />
               Top 10 Machines
+              <span className="text-xs font-normal text-gray-400 ml-1">last 30 days</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -510,6 +544,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile }) => {
             <CardTitle className="flex items-center gap-2 text-base">
               <DollarSign className="h-5 w-5 text-green-500" />
               Top 10 Venues
+              <span className="text-xs font-normal text-gray-400 ml-1">last 30 days</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -557,6 +592,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile }) => {
             <CardTitle className="flex items-center gap-2 text-base">
               <Gift className="h-5 w-5 text-purple-500" />
               Top 10 Products
+              <span className="text-xs font-normal text-gray-400 ml-1">last 30 days</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -585,7 +621,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, userProfile }) => {
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-semibold text-purple-600">
-                        {prize.total_dispensed > 0 ? `${prize.total_dispensed} in machines` : 'Not stocked'}
+                        {prize.total_dispensed > 0 ? `${prize.total_dispensed} added` : 'No activity'}
                       </p>
                       {prize.stock_quantity <= 5 && (
                         <Badge variant="destructive" className="text-xs">

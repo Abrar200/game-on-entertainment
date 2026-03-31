@@ -60,7 +60,7 @@ const BLANK_REQUEST = {
 };
 
 const BLANK_RELOCATION = {
-  machine_id: '',
+  machine_ids: [] as string[],
   from_venue_id: '',
   to_venue_id: '',
   reason: '',
@@ -84,6 +84,7 @@ const MachineMoves: React.FC = () => {
 
   const [requestForm, setRequestForm] = useState({ ...BLANK_REQUEST });
   const [relocationForm, setRelocationForm] = useState({ ...BLANK_RELOCATION });
+  const [machineSearch, setMachineSearch] = useState('');
 
   // ── Fetch ───────────────────────────────────────────────────────────────────
   const fetchMoves = async () => {
@@ -139,27 +140,33 @@ const MachineMoves: React.FC = () => {
           scheduled_date: requestForm.scheduled_date || null,
         }]);
       } else {
-        if (!relocationForm.machine_id || !relocationForm.to_venue_id) {
-          toast({ title: 'Validation', description: 'Machine and destination venue are required', variant: 'destructive' });
+        if (relocationForm.machine_ids.length === 0 || !relocationForm.to_venue_id) {
+          toast({ title: 'Validation', description: 'Select at least one machine and a destination venue', variant: 'destructive' });
           return;
         }
-        const machine = machines.find(m => m.id === relocationForm.machine_id);
-        await supabase.from('machine_moves').insert([{
-          type: 'relocation',
-          status: 'pending',
-          machine_id: relocationForm.machine_id,
-          from_venue_id: relocationForm.from_venue_id || machine?.venue_id || null,
-          to_venue_id: relocationForm.to_venue_id,
-          reason: relocationForm.reason.trim() || null,
-          notes: relocationForm.notes.trim() || null,
-          scheduled_date: relocationForm.scheduled_date || null,
-        }]);
+        // Insert one relocation row per machine
+        const rows = relocationForm.machine_ids.map(machineId => {
+          const machine = machines.find(m => m.id === machineId);
+          return {
+            type: 'relocation',
+            status: 'pending',
+            machine_id: machineId,
+            from_venue_id: relocationForm.from_venue_id || machine?.venue_id || null,
+            to_venue_id: relocationForm.to_venue_id,
+            reason: relocationForm.reason.trim() || null,
+            notes: relocationForm.notes.trim() || null,
+            scheduled_date: relocationForm.scheduled_date || null,
+          };
+        });
+        await supabase.from('machine_moves').insert(rows);
       }
 
-      toast({ title: 'Success', description: `${formType === 'request' ? 'Request' : 'Relocation'} created!` });
+      const count = formType === 'relocation' ? relocationForm.machine_ids.length : 1;
+      toast({ title: 'Success', description: formType === 'request' ? 'Request created!' : `${count} relocation${count > 1 ? 's' : ''} created!` });
       setShowForm(false);
       setRequestForm({ ...BLANK_REQUEST });
       setRelocationForm({ ...BLANK_RELOCATION });
+      setMachineSearch('');
       await fetchMoves();
     } catch (err: any) {
       toast({ title: 'Error', description: err.message || 'Failed to create', variant: 'destructive' });
@@ -221,14 +228,21 @@ const MachineMoves: React.FC = () => {
     });
   }, [moves, activeTab, statusFilter, searchTerm]);
 
-  // ── Machine auto-fill from_venue when selecting machine ──────────────────────
-  const handleMachineSelect = (machineId: string) => {
-    const m = machines.find(x => x.id === machineId);
-    setRelocationForm(f => ({
-      ...f,
-      machine_id: machineId,
-      from_venue_id: m?.venue_id || '',
-    }));
+  // ── Toggle machine in/out of relocation selection ────────────────────────────
+  const handleMachineToggle = (machineId: string) => {
+    setRelocationForm(f => {
+      const already = f.machine_ids.includes(machineId);
+      const newIds = already
+        ? f.machine_ids.filter(id => id !== machineId)
+        : [...f.machine_ids, machineId];
+      // Auto-fill from_venue from first selected machine
+      const firstMachine = machines.find(x => x.id === (newIds[0] || machineId));
+      return {
+        ...f,
+        machine_ids: newIds,
+        from_venue_id: f.from_venue_id || firstMachine?.venue_id || '',
+      };
+    });
   };
 
   // ── Card render ──────────────────────────────────────────────────────────────
@@ -409,18 +423,55 @@ const MachineMoves: React.FC = () => {
               ) : (
                 <>
                   <div>
-                    <Label>Machine *</Label>
-                    <Select value={relocationForm.machine_id || 'none'} onValueChange={v => v !== 'none' && handleMachineSelect(v)}>
-                      <SelectTrigger><SelectValue placeholder="Select machine" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Select a machine</SelectItem>
-                        {machines.map(m => (
-                          <SelectItem key={m.id} value={m.id}>
-                            {m.name}{m.venue?.name ? ` — ${m.venue.name}` : ''}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label>Machines * <span className="text-gray-400 font-normal text-xs">(select one or more)</span></Label>
+                    <div className="border rounded-md overflow-hidden">
+                      <div className="p-2 border-b bg-gray-50">
+                        <input
+                          className="w-full px-2 py-1 text-sm border rounded outline-none bg-white"
+                          placeholder="Search machines..."
+                          value={machineSearch}
+                          onChange={e => setMachineSearch(e.target.value)}
+                        />
+                      </div>
+                      <div className="max-h-44 overflow-y-auto divide-y">
+                        {machines
+                          .filter(m => {
+                            const q = machineSearch.toLowerCase();
+                            return !q || m.name.toLowerCase().includes(q) || (m.venue?.name || '').toLowerCase().includes(q);
+                          })
+                          .map(m => {
+                            const checked = relocationForm.machine_ids.includes(m.id);
+                            return (
+                              <label key={m.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors ${checked ? 'bg-blue-50' : ''}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => handleMachineToggle(m.id)}
+                                  className="rounded border-gray-300"
+                                />
+                                <span className="text-sm flex-1">{m.name}</span>
+                                {m.venue?.name && <span className="text-xs text-gray-400">{m.venue.name}</span>}
+                              </label>
+                            );
+                          })}
+                        {machines.filter(m => !machineSearch || m.name.toLowerCase().includes(machineSearch.toLowerCase())).length === 0 && (
+                          <p className="text-xs text-gray-400 text-center py-3">No machines match</p>
+                        )}
+                      </div>
+                    </div>
+                    {relocationForm.machine_ids.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {relocationForm.machine_ids.map(id => {
+                          const m = machines.find(x => x.id === id);
+                          return (
+                            <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
+                              {m?.name || id}
+                              <button type="button" onClick={() => handleMachineToggle(id)} className="hover:text-red-500">×</button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>

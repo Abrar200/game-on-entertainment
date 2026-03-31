@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, AlertTriangle, Clock, CheckCircle, Edit, Scan, List, CalendarDays, Archive, History, Check, Search, Camera, Trash2, Loader2 } from 'lucide-react';
+import { Plus, AlertTriangle, Clock, CheckCircle, Edit, Scan, List, CalendarDays, Archive, History, Check, Search, Camera, Trash2, Loader2, User } from 'lucide-react';
 import { MachineSerialSearch } from './MachineSerialSearch';
 import { AutoBarcodeScanner } from './AutoBarcodeScanner';
 import JobEditDialog from './JobEditDialog';
@@ -16,7 +16,7 @@ import { useAppContext } from '@/contexts/AppContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { format, parseISO } from 'date-fns';
-
+ 
 interface Job {
   id: string;
   title: string;
@@ -37,12 +37,12 @@ interface Job {
     venue?: { name: string };
   };
 }
-
+ 
 interface JobsManagerProps {
   userRole?: string;
   hasPermission?: (permission: string) => boolean;
 }
-
+ 
 const JobsManager: React.FC<JobsManagerProps> = ({ 
   userRole = 'technician', 
   hasPermission = () => true 
@@ -60,19 +60,21 @@ const JobsManager: React.FC<JobsManagerProps> = ({
   const [historySearch, setHistorySearch] = useState('');
   const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [staffMembers, setStaffMembers] = useState<{ id: string; full_name?: string; username?: string; role?: string }[]>([]);
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     machine_id: '',
-    priority: 'medium' as 'low' | 'medium' | 'urgent'
+    priority: 'medium' as 'low' | 'medium' | 'urgent',
+    assigned_to: null as string | null,
   });
-
+ 
   const priorityConfig = {
     low: { label: 'Low Priority', color: 'bg-green-500 text-white', icon: CheckCircle },
     medium: { label: 'Medium Priority', color: 'bg-yellow-500 text-white', icon: Clock },
     urgent: { label: 'Urgent Priority', color: 'bg-red-500 text-white', icon: AlertTriangle }
   };
-
+ 
   const getStatusConfig = (status: string) => {
     const normalizedStatus = status.toLowerCase();
     const statusConfigs = {
@@ -84,11 +86,27 @@ const JobsManager: React.FC<JobsManagerProps> = ({
     };
     return statusConfigs[normalizedStatus] || { label: status, color: 'bg-gray-500 text-white' };
   };
-
+ 
   useEffect(() => {
     fetchJobs();
   }, []);
-
+ 
+  useEffect(() => {
+    const fetchStaff = async () => {
+      try {
+        const { data } = await supabase
+          .from('users')
+          .select('id, full_name, username, role')
+          .eq('is_active', true)
+          .order('full_name', { ascending: true });
+        if (data) setStaffMembers(data);
+      } catch (err) {
+        console.warn('Could not fetch staff members:', err);
+      }
+    };
+    fetchStaff();
+  }, []);
+ 
   const fetchJobs = async (keepEditingJobClosed = false) => {
     try {
       console.log('📋 Fetching jobs...');
@@ -104,12 +122,12 @@ const JobsManager: React.FC<JobsManagerProps> = ({
         `)
         .order('scheduled_date', { ascending: true })
         .order('created_at', { ascending: false });
-
+ 
       if (error) {
         console.error('❌ Error fetching jobs:', error);
         throw error;
       }
-
+ 
       console.log('✅ Jobs fetched:', data?.length || 0);
       
       // Separate active jobs from archived jobs
@@ -118,7 +136,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       
       setJobs(activeJobs);
       setArchivedJobs(archived);
-
+ 
       if (editingJob && data && !keepEditingJobClosed) {
         const updatedEditingJob = data.find(job => job.id === editingJob.id);
         if (updatedEditingJob) {
@@ -135,7 +153,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       });
     }
   };
-
+ 
   const handleCompleteJob = async (job: Job) => {
     setCompletingJobId(job.id);
     
@@ -148,14 +166,14 @@ const JobsManager: React.FC<JobsManagerProps> = ({
         completed_by: 'current_user', // Replace with actual user info
         archived: true // Automatically archive when completed
       };
-
+ 
       const { error } = await supabase
         .from('jobs')
         .update(updateData)
         .eq('id', job.id);
-
+ 
       if (error) throw error;
-
+ 
       // Add completion note to progress updates
       const completionUpdate = `${new Date().toISOString()}: Job marked as completed and archived`;
       const updatedProgressUpdates = [...(job.progress_updates || []), completionUpdate];
@@ -164,14 +182,14 @@ const JobsManager: React.FC<JobsManagerProps> = ({
         .from('jobs')
         .update({ progress_updates: updatedProgressUpdates })
         .eq('id', job.id);
-
+ 
       toast({
         title: 'Job Completed',
         description: `${job.title} has been completed and archived`
       });
-
+ 
       await fetchJobs();
-
+ 
     } catch (error) {
       console.error('❌ Error completing job:', error);
       toast({
@@ -183,10 +201,10 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       setCompletingJobId(null);
     }
   };
-
+ 
   
   // CORRECTED handleRestoreJob function for JobsManager.tsx
-
+ 
   const handleRestoreJob = async (job: Job) => {
     try {
       console.log('🔄 Restoring job from archive:', job.title);
@@ -212,23 +230,23 @@ const JobsManager: React.FC<JobsManagerProps> = ({
         .from('jobs')
         .update(updateData)
         .eq('id', job.id);
-
+ 
       if (error) {
         console.error('❌ Restore error details:', error);
         throw error;
       }
-
+ 
       const message = updateData.scheduled_date === null 
         ? `${job.title} has been restored to active jobs (past schedule date was cleared)`
         : `${job.title} has been restored to active jobs`;
-
+ 
       toast({
         title: 'Job Restored',
         description: message
       });
-
+ 
       await fetchJobs();
-
+ 
     } catch (error) {
       console.error('❌ Error restoring job:', error);
       toast({
@@ -238,14 +256,14 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       });
     }
   };
-
+ 
   const sendJobNotification = async (job: any, machine: any, venue: any) => {
     try {
       console.log('📧 Sending job notification...');
       const { error } = await supabase.functions.invoke('send-job-email', {
         body: { job, machine, venue }
       });
-
+ 
       if (error) {
         console.error('❌ Email notification error:', error);
       } else {
@@ -255,7 +273,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       console.error('❌ Failed to send email notification:', error);
     }
   };
-
+ 
   const handleBarcodeScanned = async (barcode: string) => {
     console.log('📱 Barcode scanned in JobsManager:', barcode);
     try {
@@ -278,10 +296,10 @@ const JobsManager: React.FC<JobsManagerProps> = ({
     }
     setIsScannerOpen(false);
   };
-
+ 
   const validateForm = () => {
     console.log('🔍 Validating form data:', formData);
-
+ 
     if (!formData.title.trim()) {
       console.log('❌ Validation failed: No title');
       toast({
@@ -291,7 +309,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       });
       return false;
     }
-
+ 
     if (!formData.machine_id) {
       console.log('❌ Validation failed: No machine selected');
       toast({
@@ -301,7 +319,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       });
       return false;
     }
-
+ 
     const selectedMachine = machines?.find(m => m.id === formData.machine_id);
     if (!selectedMachine) {
       console.log('❌ Validation failed: Invalid machine ID');
@@ -313,35 +331,36 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       setFormData({ ...formData, machine_id: '' });
       return false;
     }
-
+ 
     console.log('✅ Form validation passed');
     return true;
   };
-
+ 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     console.log('🚀 Starting job creation...');
-
+ 
     if (!validateForm()) {
       console.log('❌ Form validation failed, aborting job creation');
       return;
     }
-
+ 
     setLoading(true);
-
+ 
     try {
       console.log('💾 Creating job in database...');
-
+ 
       const jobData = {
         title: formData.title.trim(),
         description: formData.description.trim(),
         machine_id: formData.machine_id,
         priority: formData.priority,
+        assigned_to: formData.assigned_to || null,
         status: 'pending'
       };
-
+ 
       console.log('📝 Job data to insert:', jobData);
-
+ 
       const { data, error } = await supabase
         .from('jobs')
         .insert([jobData])
@@ -353,18 +372,18 @@ const JobsManager: React.FC<JobsManagerProps> = ({
             venue:venues(name, address)
           )
         `);
-
+ 
       if (error) {
         console.error('❌ Database error:', error);
         throw error;
       }
-
+ 
       console.log('✅ Job created successfully:', data);
-
+ 
       if (data && data[0]) {
         console.log('📧 Attempting to send notification...');
         await sendJobNotification(data[0], data[0].machine, data[0].machine?.venue);
-
+ 
         // Upload any pending photos
         if (pendingPhotos.length > 0) {
           setUploadingPhoto(true);
@@ -390,35 +409,35 @@ const JobsManager: React.FC<JobsManagerProps> = ({
           setUploadingPhoto(false);
         }
       }
-
-      setFormData({ title: '', description: '', machine_id: '', priority: 'medium' });
+ 
+      setFormData({ title: '', description: '', machine_id: '', priority: 'medium', assigned_to: null });
       setPendingPhotos([]);
       setShowForm(false);
       await fetchJobs();
-
+ 
       toast({
         title: 'Success',
         description: 'Job created successfully!'
       });
-
+ 
       console.log('🎉 Job creation completed successfully');
-
+ 
     } catch (error: any) {
       console.error('❌ Error during job creation:', error);
-
+ 
       let errorMessage = 'Failed to create job. Please try again.';
-
+ 
       if (error.message) {
         errorMessage += ` Error: ${error.message}`;
       }
-
+ 
       if (error.code) {
         console.error('Database error code:', error.code);
         if (error.code === '23514') {
           errorMessage = 'Database constraint error: Invalid status value. Please contact support.';
         }
       }
-
+ 
       toast({
         title: 'Error',
         description: errorMessage,
@@ -428,16 +447,16 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       setLoading(false);
     }
   };
-
+ 
   const handleDialogClose = () => {
     setEditingJob(null);
     fetchJobs(true);
   };
-
+ 
   const handleJobSelect = (job: Job) => {
     setEditingJob(job);
   };
-
+ 
   const formatScheduledDate = (dateString?: string) => {
     if (!dateString) return null;
     try {
@@ -447,13 +466,13 @@ const JobsManager: React.FC<JobsManagerProps> = ({
       return dateString;
     }
   };
-
+ 
   const renderJobCard = (job: Job, isArchived = false) => {
     const priorityInfo = priorityConfig[job.priority];
     const statusInfo = getStatusConfig(job.status);
     const PriorityIcon = priorityInfo.icon;
     const scheduledDate = formatScheduledDate(job.scheduled_date);
-
+ 
     return (
       <Card key={job.id} className={`border-2 border-l-8 border-l-${job.priority === 'urgent' ? 'red' : job.priority === 'medium' ? 'yellow' : 'green'}-500 ${isArchived ? 'opacity-75' : ''}`}>
         <CardHeader>
@@ -552,15 +571,22 @@ const JobsManager: React.FC<JobsManagerProps> = ({
             {job.completed_by && (
               <p>Completed by: {job.completed_by}</p>
             )}
-            {job.assigned_to && (
-              <p>Assigned to: {job.assigned_to}</p>
-            )}
+            {job.assigned_to && (() => {
+              const staff = staffMembers.find(s => s.id === job.assigned_to);
+              const name = staff ? (staff.full_name || staff.username || 'Unknown') : job.assigned_to;
+              return (
+                <p className="flex items-center gap-1 font-medium text-blue-700">
+                  <User className="h-3 w-3" />
+                  Assigned: {name}
+                </p>
+              );
+            })()}
           </div>
         </CardContent>
       </Card>
     );
   };
-
+ 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -574,7 +600,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
           Add New Job
         </Button>
       </div>
-
+ 
       {showForm && (
         <Card className="border-2 border-blue-300">
           <CardHeader>
@@ -593,7 +619,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                   disabled={loading}
                 />
               </div>
-
+ 
               <div>
                 <Label htmlFor="description">Description</Label>
                 <Textarea
@@ -605,7 +631,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                   disabled={loading}
                 />
               </div>
-
+ 
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
                   <Label>Select Machine *</Label>
@@ -619,7 +645,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                     Scan Barcode
                   </Button>
                 </div>
-
+ 
                 <MachineSerialSearch
                   onMachineSelect={(machineId) => {
                     console.log('🔧 Machine selected via search:', machineId);
@@ -630,7 +656,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                   required
                 />
               </div>
-
+ 
               <div>
                 <Label>Priority Level</Label>
                 <Select
@@ -650,7 +676,32 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                   </SelectContent>
                 </Select>
               </div>
-
+ 
+              {/* Assign To */}
+              <div>
+                <Label className="flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5 text-gray-500" />
+                  Assign To
+                </Label>
+                <Select
+                  value={formData.assigned_to || 'unassigned'}
+                  onValueChange={v => setFormData({ ...formData, assigned_to: v === 'unassigned' ? null : v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Unassigned" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Unassigned</SelectItem>
+                    {staffMembers.map(staff => (
+                      <SelectItem key={staff.id} value={staff.id}>
+                        {staff.full_name || staff.username}
+                        {staff.role && <span className="text-gray-400 ml-1 text-xs">· {staff.role}</span>}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+ 
               {/* Attach Photos */}
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -692,7 +743,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                   </div>
                 )}
               </div>
-
+ 
               <div className="flex gap-2">
                 <Button
                   type="submit"
@@ -708,7 +759,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                   variant="outline"
                   onClick={() => {
                     setShowForm(false);
-                    setFormData({ title: '', description: '', machine_id: '', priority: 'medium' });
+                    setFormData({ title: '', description: '', machine_id: '', priority: 'medium', assigned_to: null });
                     setPendingPhotos([]);
                   }}
                   disabled={loading}
@@ -720,7 +771,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
           </CardContent>
         </Card>
       )}
-
+ 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="list" className="flex items-center gap-2">
@@ -740,10 +791,10 @@ const JobsManager: React.FC<JobsManagerProps> = ({
             Job History
           </TabsTrigger>
         </TabsList>
-
+ 
         <TabsContent value="list" className="space-y-4">
           {jobs.map((job) => renderJobCard(job, false))}
-
+ 
           {jobs.length === 0 && (
             <Card className="text-center py-8">
               <CardContent>
@@ -752,11 +803,11 @@ const JobsManager: React.FC<JobsManagerProps> = ({
             </Card>
           )}
         </TabsContent>
-
+ 
         <TabsContent value="calendar">
           <JobsCalendar onJobSelect={handleJobSelect} />
         </TabsContent>
-
+ 
         <TabsContent value="archived" className="space-y-4">
           <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
             <h3 className="font-semibold text-purple-800 mb-2">📦 Archived Jobs</h3>
@@ -765,9 +816,9 @@ const JobsManager: React.FC<JobsManagerProps> = ({
               You can restore jobs if needed.
             </p>
           </div>
-
+ 
           {archivedJobs.map((job) => renderJobCard(job, true))}
-
+ 
           {archivedJobs.length === 0 && (
             <Card className="text-center py-8">
               <CardContent>
@@ -777,7 +828,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
             </Card>
           )}
         </TabsContent>
-
+ 
         <TabsContent value="history" className="space-y-4">
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
             <h3 className="font-semibold text-blue-800 mb-2">📊 Job History Analytics</h3>
@@ -800,7 +851,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
               </div>
             </div>
           </div>
-
+ 
           {/* Search bar */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -811,7 +862,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
               onChange={(e) => setHistorySearch(e.target.value)}
             />
           </div>
-
+ 
           {/* Last 6 months combined list */}
           {(() => {
             const sixMonthsAgo = new Date();
@@ -829,7 +880,7 @@ const JobsManager: React.FC<JobsManagerProps> = ({
                 );
               })
               .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
+ 
             if (allJobs.length === 0) {
               return (
                 <Card>
@@ -853,14 +904,14 @@ const JobsManager: React.FC<JobsManagerProps> = ({
           })()}
         </TabsContent>
       </Tabs>
-
+ 
       <JobEditDialog
         job={editingJob}
         open={!!editingJob}
         onClose={handleDialogClose}
         onUpdate={() => fetchJobs(true)}
       />
-
+ 
       <AutoBarcodeScanner
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}
@@ -869,5 +920,5 @@ const JobsManager: React.FC<JobsManagerProps> = ({
     </div>
   );
 };
-
+ 
 export default JobsManager;

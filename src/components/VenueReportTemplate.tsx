@@ -1,6 +1,6 @@
 // src/components/VenueReportTemplate.tsx - Complete fixed version
 import React from 'react';
-
+ 
 interface MachineReportData {
   machine_id: string;
   machine_name: string;
@@ -11,7 +11,7 @@ interface MachineReportData {
   report_count: number;
   has_data: boolean;
 }
-
+ 
 interface VenueReportTemplateProps {
   venue: {
     id: string;
@@ -43,10 +43,10 @@ interface VenueReportTemplateProps {
   };
   companyLogo?: string;
 }
-
+ 
 // Export the interface for use in other components
 export type { MachineReportData };
-
+ 
 // Changed from React component to utility function
 export const VenueReportTemplate = ({
   venue,
@@ -71,7 +71,7 @@ export const VenueReportTemplate = ({
     
   const allPaid = reports.length > 0 ? reports.every(report => report.paid_status) : true;
   const reportPeriod = `${new Date(dateRange.start).toLocaleDateString()} - ${new Date(dateRange.end).toLocaleDateString()}`;
-
+ 
   const generateHTML = () => {
     // Generate machine rows using the new machineReports system
     const machineRows = machineReports.length > 0 
@@ -128,25 +128,32 @@ export const VenueReportTemplate = ({
             </tr>
           `;
         }).join('');
-
-    // FIXED: Proper logo handling with no overlap
-    const logoElement = companyLogo ? 
-      `<img src="${companyLogo}" alt="Game On Entertainment Logo" style="width: 120px; height: 70px; object-fit: contain;" />` :
-      `<img src="/images/logo.jpg" alt="Game On Entertainment Logo" style="width: 120px; height: 70px; object-fit: contain;" />`;
-
-    // FIXED: Venue image handling with proper error handling
-    const venueImageElement = venue.image_url ? 
-      `<div style="text-align: center; margin: 20px 0;">
-        <img src="${venue.image_url.startsWith('http') ? venue.image_url : `https://ogbxiolnyzidylzoljuh.supabase.co/storage/v1/object/public/images/${venue.image_url}`}" 
-             alt="${venue.name}" 
-             style="max-width: 300px; max-height: 200px; object-fit: cover; border-radius: 8px; border: 2px solid #ddd;"
-             onload="console.log('Venue image loaded successfully')"
-             onerror="console.error('Venue image failed to load:', this.src); this.style.display='none'" />
-      </div>` : '';
-
+ 
+    // Logo — prefer uploaded company logo, fall back to file
+    const logoElement = companyLogo
+      ? `<img src="${companyLogo}" alt="Game On Entertainment" style="width:160px;height:90px;object-fit:contain;" />`
+      : `<img src="/images/logo.jpg" alt="Game On Entertainment" style="width:160px;height:90px;object-fit:contain;" />`;
+ 
+    // Venue image — full-width banner on page 1 if available, placeholder otherwise
+    const venueImageUrl = venue.image_url
+      ? (venue.image_url.startsWith('http')
+          ? venue.image_url
+          : `https://ogbxiolnyzidylzoljuh.supabase.co/storage/v1/object/public/images/${venue.image_url}`)
+      : null;
+ 
+    const venueImageElement = venueImageUrl
+      ? `<div style="margin:25px 0;border-radius:10px;overflow:hidden;border:2px solid #ddd;max-height:260px;">
+           <img src="${venueImageUrl}" alt="${venue.name}"
+                style="width:100%;height:260px;object-fit:cover;display:block;"
+                onerror="this.parentElement.style.display='none'" />
+         </div>`
+      : `<div style="margin:25px 0;height:180px;border-radius:10px;background:linear-gradient(135deg,#2c3e50,#667eea);display:flex;align-items:center;justify-content:center;">
+           <p style="color:white;font-size:1.4em;font-weight:bold;margin:0;">${venue.name}</p>
+         </div>`;
+ 
     const machinesWithData = machineReports.filter(m => m.has_data).length;
     const totalMachines = machineReports.length || machines.length;
-
+ 
     return `
       <!DOCTYPE html>
       <html>
@@ -405,93 +412,113 @@ export const VenueReportTemplate = ({
       </head>
       <body>
         <div class="container">
-          <div class="header">
-            <div class="company-branding">
-              ${logoElement}
-              <p class="company-name">Game On Entertainment</p>
+ 
+          <!-- ═══════════════════ PAGE 1 ═══════════════════ -->
+          <div style="min-height:100vh;display:flex;flex-direction:column;page-break-after:always;">
+ 
+            <!-- Header -->
+            <div class="header">
+              <div class="company-branding">
+                ${logoElement}
+                <p class="company-name">Game On Entertainment</p>
+              </div>
+              <div class="header-content">
+                <h1 class="title">Venue Commission Report</h1>
+                <p class="subtitle">${venue.name}</p>
+                <p style="color:rgba(255,255,255,0.8);font-size:0.95em;margin-top:6px;">Period: ${reportPeriod}</p>
+              </div>
             </div>
-            <div class="header-content">
-              <h1 class="title">Venue Commission Report</h1>
-              <p class="subtitle">${venue.name}</p>
+ 
+            <!-- Venue Image -->
+            <div class="content" style="flex:1;">
+              ${venueImageElement}
+ 
+              <!-- Info grid -->
+              <div class="info-grid">
+                <div class="info-card">
+                  <h3>Venue Information</h3>
+                  <p><strong>Name:</strong> ${venue.name}</p>
+                  ${venue.address ? `<p><strong>Address:</strong> ${venue.address}</p>` : ''}
+                  <p><strong>Commission Rate:</strong> ${venue.commission_percentage}%</p>
+                  <p><strong>Report Period:</strong> ${reportPeriod}</p>
+                </div>
+                <div class="info-card">
+                  <h3>Report Summary</h3>
+                  <p><strong>Total Machines:</strong> ${totalMachines}</p>
+                  <p><strong>Machines with Data:</strong> ${machinesWithData}/${totalMachines}</p>
+                  <p><strong>Date Range:</strong> ${dateRange.start} to ${dateRange.end}</p>
+                  <p><strong>Generated:</strong> ${new Date().toLocaleDateString()}</p>
+                </div>
+              </div>
+ 
+              <!-- Summary stats -->
+              <div class="summary-stats">
+                <div class="stat-card">
+                  <div class="stat-value">$${totalRevenue.toFixed(2)}</div>
+                  <div class="stat-label">Total Machine Revenue</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${totalTokens}</div>
+                  <div class="stat-label">Total Tokens in Machines</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">${venue.commission_percentage}%</div>
+                  <div class="stat-label">Commission Rate</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-value">$${commissionAmount.toFixed(2)}</div>
+                  <div class="stat-label">Commission Amount</div>
+                </div>
+              </div>
+ 
+              <!-- Revenue breakdown -->
+              <div class="revenue-breakdown">
+                <h4>Revenue Breakdown</h4>
+                <div class="breakdown-item">
+                  <span>Total Machine Revenue (${reportPeriod}):</span>
+                  <span>$${totalRevenue.toFixed(2)}</span>
+                </div>
+                <div class="breakdown-item">
+                  <span>Commission Rate:</span>
+                  <span>${venue.commission_percentage}%</span>
+                </div>
+                <div class="breakdown-item">
+                  <span>Your Commission Amount:</span>
+                  <span>$${commissionAmount.toFixed(2)}</span>
+                </div>
+              </div>
+ 
+              <div class="token-notice">
+                <strong>Important Note:</strong> Commission on tokens shown in machines is paid separately via the token machine commission system
+              </div>
+ 
+              <div class="commission-highlight">
+                <h3>💰 Commission Payment Due</h3>
+                <p>Total Commission Amount: <strong>$${commissionAmount.toFixed(2)}</strong></p>
+                <p>Payment will be processed within 7 business days</p>
+              </div>
+ 
+              <div class="payment-status">
+                <strong>Payment Status: ${allPaid ? 'ALL COMMISSIONS PAID ✓' : 'PENDING PAYMENT'}</strong>
+              </div>
             </div>
           </div>
-          
-          <div class="content">
-            ${venueImageElement}
-            
-            <div class="info-grid">
-              <div class="info-card">
-                <h3>Venue Information</h3>
-                <p><strong>Name:</strong> ${venue.name}</p>
-                ${venue.address ? `<p><strong>Address:</strong> ${venue.address}</p>` : ''}
-                <p><strong>Commission Rate:</strong> ${venue.commission_percentage}%</p>
-                <p><strong>Report Period:</strong> ${reportPeriod}</p>
-              </div>
-              <div class="info-card">
-                <h3>Report Summary</h3>
-                <p><strong>Total Machines:</strong> ${totalMachines}</p>
-                <p><strong>Machines with Data:</strong> ${machinesWithData}/${totalMachines}</p>
-                <p><strong>Data Source:</strong> Machine Reports (${dateRange.start} to ${dateRange.end})</p>
-                <p><strong>Generated:</strong> ${new Date().toLocaleDateString()}</p>
-              </div>
-            </div>
-            
-            <div class="summary-stats">
-              <div class="stat-card">
-                <div class="stat-value">$${totalRevenue.toFixed(2)}</div>
-                <div class="stat-label">Total Machine Revenue</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-value">${totalTokens}</div>
-                <div class="stat-label">Total Tokens in Machines</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-value">${venue.commission_percentage}%</div>
-                <div class="stat-label">Commission Rate</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-value">$${commissionAmount.toFixed(2)}</div>
-                <div class="stat-label">Commission Amount</div>
-              </div>
-            </div>
-            
-            <div class="revenue-breakdown">
-              <h4>Revenue Breakdown</h4>
-              <div class="breakdown-item">
-                <span>Total Machine Revenue (${reportPeriod}):</span>
-                <span>$${totalRevenue.toFixed(2)}</span>
-              </div>
-              <div class="breakdown-item">
-                <span>Commission Rate:</span>
-                <span>${venue.commission_percentage}%</span>
-              </div>
-              <div class="breakdown-item">
-                <span>Your Commission Amount:</span>
-                <span>$${commissionAmount.toFixed(2)}</span>
-              </div>
-            </div>
-            
-            <div class="token-notice">
-              <strong>Important Note:</strong> Commission on tokens shown in machines is paid separately via the token machine commission system
-            </div>
-            
-            <div class="commission-highlight">
-              <h3>💰 Commission Payment Due</h3>
-              <p>Total Commission Amount: <strong>$${commissionAmount.toFixed(2)}</strong></p>
-              <p>Payment will be processed within 7 business days</p>
-            </div>
-            
-            <div class="payment-status">
-              <strong>Payment Status: ${allPaid ? 'ALL COMMISSIONS PAID ✓' : 'PENDING PAYMENT'}</strong>
-            </div>
-          </div>
-          
+ 
+          <!-- ═══════════════════ PAGE 2 — Machine List ═══════════════════ -->
           <div class="page-break">
             <div class="content">
-              <h3 style="color: #2c3e50; margin-bottom: 20px; font-weight: bold; font-size: 1.3em;">
-                📊 Machine Performance Breakdown (${reportPeriod})
-              </h3>
-              
+ 
+              <!-- Page 2 header with logo -->
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:15px;border-bottom:2px solid #2c3e50;">
+                <div>
+                  <h3 style="color:#2c3e50;font-weight:bold;font-size:1.3em;margin:0;">
+                    📊 Machine Performance Breakdown
+                  </h3>
+                  <p style="color:#666;font-size:0.9em;margin:4px 0 0;">${reportPeriod} · ${venue.name}</p>
+                </div>
+                ${logoElement}
+              </div>
+ 
               <table class="machine-table">
                 <thead>
                   <tr>
@@ -507,34 +534,35 @@ export const VenueReportTemplate = ({
                   ${machineRows}
                 </tbody>
               </table>
-              
+ 
               ${machinesWithData < totalMachines ? `
-                <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin: 20px 0; color: #856404;">
-                  <strong>⚠️ Notice:</strong> ${totalMachines - machinesWithData} machine(s) have no reports for the selected date range. 
+                <div style="background:#fff3cd;border:1px solid #ffeaa7;border-radius:8px;padding:15px;margin:20px 0;color:#856404;">
+                  <strong>⚠️ Notice:</strong> ${totalMachines - machinesWithData} machine(s) have no reports for the selected date range.
                   These machines show $0.00 revenue and are not included in commission calculations.
                 </div>
               ` : ''}
-              
-              <div style="background: #e8f5e8; border: 1px solid #c3e6c3; border-radius: 8px; padding: 15px; margin: 20px 0; color: #155724;">
-                <strong>✅ Data Verification:</strong> This report is generated from actual machine reports submitted between ${reportPeriod}. 
+ 
+              <div style="background:#e8f5e8;border:1px solid #c3e6c3;border-radius:8px;padding:15px;margin:20px 0;color:#155724;">
+                <strong>✅ Data Verification:</strong> This report is generated from actual machine reports submitted between ${reportPeriod}.
                 All revenue figures are based on real cash/paywave collections from your machines.
               </div>
             </div>
           </div>
-          
+ 
           <div class="footer">
             <p><strong>Report Details</strong></p>
             <p>Generated: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</p>
             <p>Report Period: ${reportPeriod}</p>
             <p>Total Revenue: $${totalRevenue.toFixed(2)} | Commission: $${commissionAmount.toFixed(2)}</p>
-            <p style="margin-top: 10px; font-size: 1.1em;"><strong>Game On Entertainment</strong> - Thank you for your partnership!</p>
+            <p style="margin-top:10px;font-size:1.1em;"><strong>Game On Entertainment</strong> — Thank you for your partnership!</p>
           </div>
+ 
         </div>
       </body>
       </html>
     `;
   };
-
+ 
   return {
     generateHTML,
     totalRevenue,
@@ -545,5 +573,5 @@ export const VenueReportTemplate = ({
     totalMachines: machineReports.length || machines.length
   };
 };
-
+ 
 export default VenueReportTemplate;

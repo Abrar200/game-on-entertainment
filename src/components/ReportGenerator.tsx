@@ -22,6 +22,7 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ restrictedMode }) => 
   const [reportType, setReportType] = useState('machine');
   const [selectedMachine, setSelectedMachine] = useState('');
   const [selectedVenue, setSelectedVenue] = useState('');
+  const [venueSearch, setVenueSearch] = useState('');
   const [tokensInGame, setTokensInGame] = useState('');
   const [toyMeterReading, setToyMeterReading] = useState('');
   const [machineTurnover, setMachineTurnover] = useState('');
@@ -402,11 +403,22 @@ const ReportGenerator: React.FC<ReportGeneratorProps> = ({ restrictedMode }) => 
                       <SelectValue placeholder="Choose a venue" />
                     </SelectTrigger>
                     <SelectContent>
-                      {venues.map(venue => (
-                        <SelectItem key={venue.id} value={venue.id}>
-                          {venue.name} - {venue.commission_percentage}% commission
-                        </SelectItem>
-                      ))}
+                      <div className="p-2">
+                        <input
+                          className="w-full px-2 py-1 text-sm border rounded outline-none"
+                          placeholder="Search venues..."
+                          value={venueSearch}
+                          onChange={e => setVenueSearch(e.target.value)}
+                          onKeyDown={e => e.stopPropagation()}
+                        />
+                      </div>
+                      {venues
+                        .filter(v => v.name.toLowerCase().includes(venueSearch.toLowerCase()))
+                        .map(venue => (
+                          <SelectItem key={venue.id} value={venue.id}>
+                            {venue.name} - {venue.commission_percentage}% commission
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>

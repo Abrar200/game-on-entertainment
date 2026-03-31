@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAppContext } from '@/contexts/AppContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { Building2, FileText, Home, QrCode, Search, Calendar, Filter, RefreshCw } from 'lucide-react';
+import { Building2, FileText, Home, QrCode, Search, Calendar, Filter, RefreshCw, TrendingUp, DollarSign } from 'lucide-react';
 import MachineReportViewer from './MachineReportViewer';
 
 interface MachineReport {
@@ -17,6 +17,7 @@ interface MachineReport {
   id: string;
   machine_id: string;
   money_collected: number;
+  prize_value?: number;
   current_toy_count: number;
   previous_toy_count: number;
   toys_dispensed: number;
@@ -65,6 +66,8 @@ const ReportsContent: React.FC = () => {
   const [selectedVenue, setSelectedVenue] = useState<string>('all');
   const [selectedMachine, setSelectedMachine] = useState<string>('all');
   const [paymentFilter, setPaymentFilter] = useState<string>('all');
+  const [venueDropdownSearch, setVenueDropdownSearch] = useState('');
+  const [machineDropdownSearch, setMachineDropdownSearch] = useState('');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [activeTab, setActiveTab] = useState('machine-reports');
 
@@ -350,12 +353,23 @@ const ReportsContent: React.FC = () => {
                   <SelectValue placeholder="All Venues" />
                 </SelectTrigger>
                 <SelectContent>
+                  <div className="p-2">
+                    <input
+                      className="w-full px-2 py-1 text-sm border rounded outline-none"
+                      placeholder="Search venues..."
+                      value={venueDropdownSearch}
+                      onChange={e => setVenueDropdownSearch(e.target.value)}
+                      onKeyDown={e => e.stopPropagation()}
+                    />
+                  </div>
                   <SelectItem value="all">All Venues</SelectItem>
-                  {venues.map(venue => (
-                    <SelectItem key={venue.id} value={venue.id}>
-                      {venue.name}
-                    </SelectItem>
-                  ))}
+                  {venues
+                    .filter(v => v.name.toLowerCase().includes(venueDropdownSearch.toLowerCase()))
+                    .map(venue => (
+                      <SelectItem key={venue.id} value={venue.id}>
+                        {venue.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
 
@@ -364,12 +378,23 @@ const ReportsContent: React.FC = () => {
                   <SelectValue placeholder="All Machines" />
                 </SelectTrigger>
                 <SelectContent>
+                  <div className="p-2">
+                    <input
+                      className="w-full px-2 py-1 text-sm border rounded outline-none"
+                      placeholder="Search machines..."
+                      value={machineDropdownSearch}
+                      onChange={e => setMachineDropdownSearch(e.target.value)}
+                      onKeyDown={e => e.stopPropagation()}
+                    />
+                  </div>
                   <SelectItem value="all">All Machines</SelectItem>
-                  {availableMachines.map(machine => (
-                    <SelectItem key={machine.id} value={machine.id}>
-                      {machine.name}
-                    </SelectItem>
-                  ))}
+                  {availableMachines
+                    .filter(m => m.name.toLowerCase().includes(machineDropdownSearch.toLowerCase()))
+                    .map(machine => (
+                      <SelectItem key={machine.id} value={machine.id}>
+                        {machine.name}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
 
@@ -495,13 +520,25 @@ const ReportsContent: React.FC = () => {
                                       <p className="text-xs text-gray-400">
                                         {new Date(report.report_date).toLocaleDateString()}
                                       </p>
-                                      <div className="mt-1 flex items-center gap-3 text-xs">
+                                      <div className="mt-1 flex items-center gap-3 text-xs flex-wrap">
                                         <span className="text-green-600 font-medium">
                                           ${report.money_collected.toFixed(2)}
                                         </span>
                                         <span className="text-orange-600">
                                           {report.tokens_in_game || 0} tokens
                                         </span>
+                                        {report.prize_value != null && report.money_collected > 0 && (
+                                          <span className="text-blue-600 font-medium flex items-center gap-0.5">
+                                            <TrendingUp className="h-3 w-3" />
+                                            {((report.prize_value / report.money_collected) * 100).toFixed(1)}% payout
+                                          </span>
+                                        )}
+                                        {report.prize_value != null && (
+                                          <span className="text-purple-600 font-medium flex items-center gap-0.5">
+                                            <DollarSign className="h-3 w-3" />
+                                            COGS: ${report.prize_value.toFixed(2)}
+                                          </span>
+                                        )}
                                         <Badge 
                                           variant={report.paid_status ? 'default' : 'secondary'}
                                           className="text-xs"

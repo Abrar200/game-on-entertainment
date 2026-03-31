@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus, MapPin, Trash2, Edit } from 'lucide-react';
+import { Plus, MapPin, Trash2, Edit, Search } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import ImageUpload from '@/components/ImageUpload';
 import ConfirmDeleteDialog from '@/components/ConfirmDeleteDialog';
@@ -21,6 +21,7 @@ const VenuesManager: React.FC<VenuesManagerProps> = ({ readOnly = false }) => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedVenue, setSelectedVenue] = useState<string>('');
+  const [venueSearch, setVenueSearch] = useState('');
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean, venueId: string, venueName: string }>({
     open: false, venueId: '', venueName: ''
   });
@@ -157,8 +158,21 @@ const VenuesManager: React.FC<VenuesManagerProps> = ({ readOnly = false }) => {
         </Dialog>
       </div>
 
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <Input
+          className="pl-9"
+          placeholder="Search venues..."
+          value={venueSearch}
+          onChange={e => setVenueSearch(e.target.value)}
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {venues.map((venue) => (
+        {venues
+          .filter(venue => venue.name.toLowerCase().includes(venueSearch.toLowerCase()) ||
+            (venue.address || '').toLowerCase().includes(venueSearch.toLowerCase()))
+          .map((venue) => (
           <Card key={venue.id} className="hover:shadow-lg transition-shadow">
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -216,6 +230,13 @@ const VenuesManager: React.FC<VenuesManagerProps> = ({ readOnly = false }) => {
         <Card>
           <CardContent className="text-center py-8">
             <p className="text-gray-500">No venues added yet. Click "Add New Venue" to get started.</p>
+          </CardContent>
+        </Card>
+      )}
+      {venues.length > 0 && venueSearch && venues.filter(v => v.name.toLowerCase().includes(venueSearch.toLowerCase()) || (v.address || '').toLowerCase().includes(venueSearch.toLowerCase())).length === 0 && (
+        <Card>
+          <CardContent className="text-center py-8">
+            <p className="text-gray-500">No venues match "{venueSearch}".</p>
           </CardContent>
         </Card>
       )}
